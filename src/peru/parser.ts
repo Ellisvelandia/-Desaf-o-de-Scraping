@@ -30,6 +30,7 @@
  *    descartaría en silencio las demás. El uuid identifica al documento, que es
  *    la unidad que este portal publica.
  */
+import { createHash } from 'crypto';
 import * as cheerio from 'cheerio';
 import { EstructuraInesperadaError } from '../errores';
 import { DocumentoProceso, ProcesoJudicial } from '../types';
@@ -52,8 +53,21 @@ const RE_FECHA = /(\d{1,2})\/(\d{1,2})\/(\d{4})/;
 /** Ruta del servlet que sirve el PDF de una resolución. */
 const RE_SERVLET = /ServletDescarga\?uuid=([0-9a-fA-F-]{16,})/;
 
-/** «Página: 1 de 15247» — el portal anuncia el total en páginas, no en registros. */
-const RE_TOTAL_PAGINAS = /\bde\s+([\d.,]{1,12})\s*$/;
+/**
+ * «Página: 1 de 15247» — el portal anuncia el total en PÁGINAS, no en registros.
+ *
+ * El patrón exige el rótulo «Página»/«Pág.» delante, y no solo un «de N» al
+ * final. La versión laxa era un fallo grave esperando a ocurrir: las sumillas de
+ * este portal son prosa jurídica peruana y dicen «de la Constitución Política de
+ * 1993» o «Decreto Legislativo 768 de 1993» con toda naturalidad. Un total de
+ * 1993 páginas leído de una sumilla habría detenido la extracción en la página
+ * 1.993 de 15.247 —el 13 % del corpus— escribiendo `extraccionCompletada: true`,
+ * sin un solo error en el log.
+ *
+ * El número intermedio (la página actual) se admite opcional porque el portal lo
+ * pinta dentro de un `<input>`, cuyo texto no forma parte del texto del nodo.
+ */
+const RE_TOTAL_PAGINAS = /p[áa]g(?:ina)?\.?\s*:?\s*(?:\d+)?\s*de\s+([\d.,]{1,12})\b/i;
 
 /** Rótulos que tienen sitio propio en el contrato y no se duplican en `camposExtra`. */
 const ROTULO_SALA = 'sala suprema';
@@ -105,6 +119,18 @@ function texto($: cheerio.CheerioAPI, el: Elemento): string {
 }
 
 /**
+ * Resumen corto y estable del contenido de un panel, para desempatar dos
+ * resoluciones del mismo expediente cuando ninguna publica uuid.
+ *
+ * Se normaliza antes de resumir para que un cambio de espaciado o de saltos de
+ * línea en la plantilla no cambie la clave y convierta cada pasada en registros
+ * nuevos.
+ */
+function resumenDe(contenido: string): string {
+  return createHash('sha1').update(normalizar(contenido)).digest('hex').slice(0, 12);
+}
+
+/**
  * Total de PÁGINAS que anuncia el portal, no de registros.
  *
  * Es una distinción con consecuencias: el paginador dice «de 15247» refiriéndose
@@ -114,17 +140,28 @@ function texto($: cheerio.CheerioAPI, el: Elemento): string {
  */
 export function detectarTotalPaginas($: cheerio.CheerioAPI): number | undefined {
   let total: number | undefined;
+  let profundidadElegida = -1;
+
   $('*').each((_, el) => {
-    if (total !== undefined) return;
     const $el = $(el);
-    // Solo nodos hoja: en un ancestro, el texto agregado casaría con cualquier
-    // «de N» que apareciera en otra parte de la página.
-    if ($el.children().length > 0) return;
     const m = RE_TOTAL_PAGINAS.exec(normalizar($el.text()));
     if (!m) return;
     const n = Number(m[1].replace(/[.,]/g, ''));
-    if (Number.isInteger(n) && n > 0) total = n;
+    if (!Number.isInteger(n) || n <= 0) return;
+
+    // Gana el elemento MÁS PROFUNDO que case, es decir, el más específico. No se
+    // puede exigir un nodo hoja: el portal reparte «Página:», el número (dentro
+    // de un `<input>`, cuyo valor no es texto del nodo) y «de 15247» entre
+    // varios hijos del mismo contenedor, así que la coincidencia solo aparece
+    // completa en el padre. Pero quedarse con cualquier ancestro llevaría hasta
+    // el `<body>`, cuyo texto agregado casa con todo.
+    const profundidad = $el.parents().length;
+    if (profundidad > profundidadElegida) {
+      profundidadElegida = profundidad;
+      total = n;
+    }
   });
+
   return total;
 }
 
@@ -205,9 +242,17 @@ function parsearPanel($: cheerio.CheerioAPI, panel: Elemento, pagina: number): P
   if (!expediente && !documento) return undefined;
 
   // El uuid identifica LA RESOLUCIÓN; el expediente identifica el EXPEDIENTE, que
-  // puede publicar varias. Se prefiere el uuid para no fundir resoluciones
-  // distintas del mismo expediente en un solo registro.
-  const claveUnica = documento?.id ?? `exp:${expediente}`;
+  // puede publicar varias (una casación y su aclaración, por ejemplo).
+  //
+  // Cuando no hay uuid —el portal publica esos paneles solo con «Ver Ficha»— el
+  // expediente A SECAS no vale como clave, y el respaldo anterior cometía justo
+  // el error que este comentario dice evitar: dos resoluciones del mismo
+  // expediente producían `exp:037233-2025` las dos, la segunda se descartaba por
+  // duplicada y desaparecía sin entrada en `failed.json`. El desempate es un
+  // resumen del contenido del panel, que es estable entre ejecuciones —el mismo
+  // panel da el mismo resumen— y distinto entre resoluciones, porque difieren al
+  // menos en la fecha o en la sumilla.
+  const claveUnica = documento?.id ?? `exp:${expediente}:${resumenDe(cuerpo.text())}`;
 
   const registro: ProcesoJudicial = { claveUnica, paginaOrigen: pagina };
   if (expediente) registro.numeroProcesso = expediente;

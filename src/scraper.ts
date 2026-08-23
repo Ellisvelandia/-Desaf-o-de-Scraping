@@ -399,7 +399,17 @@ export class Scraper {
 
       const rutas: string[] = [];
       let fallidos = 0;
+      let cortadoPorTope = false;
       for (const documento of conArchivo) {
+        // El tope se comprueba TAMBIÉN aquí, no solo entre procesos. Un expediente
+        // del PJe pasa a menudo de cien documentos, así que con la comprobación
+        // únicamente en el bucle exterior un `MAX_DESCARGAS=1` bajaba el proceso
+        // entero: el tope existe para «demostrar sin bajarlo todo», y rebasarlo
+        // por un factor arbitrario lo deja sin función.
+        if (bajados >= tope) {
+          cortadoPorTope = true;
+          break;
+        }
         try {
           // `descargar` devuelve la ruta sin pedir nada cuando el fichero ya está
           // validado en disco. Eso no es una descarga y no debe consumir el tope
@@ -434,7 +444,11 @@ export class Scraper {
       // anotados, no los reintentaba ninguna pasada posterior. `parcial` los deja
       // dentro: `descargar` salta los ficheros ya validados, así que reintentarlo
       // cuesta solo los que faltan.
-      proceso.estado = fallidos === 0 ? 'completado' : rutas.length > 0 ? 'parcial' : 'fallido';
+      // Un proceso cortado por el tope NO está completado aunque no fallara nada:
+      // le quedan documentos sin pedir. `parcial` lo mantiene en pendientes para
+      // que la pasada siguiente termine lo que falta.
+      proceso.estado =
+        fallidos === 0 && !cortadoPorTope ? 'completado' : rutas.length > 0 || cortadoPorTope ? 'parcial' : 'fallido';
       // Persistir tras cada proceso: una interrupción cuesta un proceso, no el run.
       this.persistencia.guardarProcesos(procesos);
 

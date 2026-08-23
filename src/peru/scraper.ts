@@ -99,7 +99,10 @@ export class ScraperPeru {
         const lote = parsearResoluciones(sesion.documento, pagina);
         const nuevas = this.persistencia.anadirProcesos(procesos, lote);
         for (const r of lote) vistasAhora.add(r.claveUnica);
-        ultimaCompletada = pagina;
+        // `Math.max` y no asignación directa: con un `MAX_PAGINAS` bajo en una
+        // ejecución de demostración, el estado guardado retrocedería (400 → 50) y
+        // la siguiente pasada completa volvería a recorrer 350 páginas ya hechas.
+        ultimaCompletada = Math.max(ultimaCompletada, pagina);
         log.info(
           `Página ${pagina}: ${lote.length} resoluciones, ${nuevas} nuevas ` +
             `(acumulado ${procesos.size}, esta ejecución ${vistasAhora.size})`,
@@ -141,8 +144,28 @@ export class ScraperPeru {
       }
 
       if (!hayPaginaSiguiente(sesion.documento, actual)) {
-        log.info('El paginador no ofrece más páginas: extracción completa');
-        completada = true;
+        // «No hay paginador» y «se acabaron los resultados» no son lo mismo, y
+        // confundirlos escribe un `extraccionCompletada: true` que es falso. El
+        // paginador puede desaparecer del documento por un render parcial que no
+        // lo incluya, y entonces el recorrido se daría por terminado en la página
+        // 3 de 15.247 sin un solo error en el log. Es la misma salvaguarda que ya
+        // tenía el objetivo brasileño; este no la había copiado.
+        const faltan = totalPaginas !== undefined && actual < totalPaginas;
+        if (faltan) {
+          log.warn(
+            `El paginador no ofrece más páginas, pero se va por la ${actual} de las ${totalPaginas} que anuncia ` +
+              'el portal. NO se marca la extracción como completa: puede que el paginador haya desaparecido del ' +
+              'documento o que su forma haya cambiado.',
+          );
+          this.persistencia.registrarFallo({
+            claveUnica: `pagina-${actual}`,
+            fase: 'pagina',
+            motivo: `El paginador desapareció en la página ${actual} de ${totalPaginas}`,
+          });
+        } else {
+          log.info('El paginador no ofrece más páginas: extracción completa');
+          completada = true;
+        }
         break;
       }
 
@@ -209,7 +232,15 @@ export class ScraperPeru {
 
       const rutas: string[] = [];
       let fallidos = 0;
+      let cortadoPorTope = false;
       for (const documento of documentos) {
+        // El tope también dentro del bucle de documentos, no solo entre
+        // resoluciones: rebasarlo por un factor arbitrario deja sin función a la
+        // única cota que hay contra una descarga masiva accidental.
+        if (bajados >= tope) {
+          cortadoPorTope = true;
+          break;
+        }
         try {
           // `descargar` devuelve la ruta sin pedir nada cuando el fichero ya está
           // validado en disco. Eso no es una descarga y no debe consumir el tope,
@@ -233,9 +264,11 @@ export class ScraperPeru {
       }
 
       proceso.archivos = [...new Set([...(proceso.archivos ?? []), ...rutas])];
-      // `completado` solo sin fallos: `parcial` mantiene la resolución dentro del
-      // filtro de pendientes para que la pasada siguiente reintente lo que falta.
-      proceso.estado = fallidos === 0 ? 'completado' : rutas.length > 0 ? 'parcial' : 'fallido';
+      // `completado` solo sin fallos y sin corte por tope: `parcial` mantiene la
+      // resolución dentro del filtro de pendientes para que la pasada siguiente
+      // termine lo que falta.
+      proceso.estado =
+        fallidos === 0 && !cortadoPorTope ? 'completado' : rutas.length > 0 || cortadoPorTope ? 'parcial' : 'fallido';
       // Persistir tras cada resolución: una interrupción cuesta una, no la pasada.
       this.persistencia.guardarProcesos(procesos);
     }

@@ -45,8 +45,29 @@ beforeEach(() => {
 describe('parser de resultados', () => {
   it('extrae las resoluciones identificables y descarta solo las que no tienen ninguna clave', () => {
     const resoluciones = parsearResoluciones(cargar('peru-resultados.html'), 1);
-    // Tres paneles en el fixture; el tercero no publica ni expediente ni enlace.
-    expect(resoluciones).toHaveLength(2);
+    // Cinco paneles en el fixture; solo uno —sin expediente y sin enlace— cae.
+    expect(resoluciones).toHaveLength(4);
+  });
+
+  it('NO funde dos resoluciones del mismo expediente cuando ninguna publica PDF', () => {
+    // Es el caso real de una casación y su aclaración. Con la clave
+    // `exp:<expediente>` a secas compartían clave, la segunda se descartaba por
+    // duplicada y desaparecía sin entrada en failed.json.
+    const resoluciones = parsearResoluciones(cargar('peru-resultados.html'), 1);
+    const delMismoExpediente = resoluciones.filter((r) => r.numeroProcesso === '029269-2025');
+
+    expect(delMismoExpediente).toHaveLength(2);
+    expect(delMismoExpediente[0].claveUnica).not.toBe(delMismoExpediente[1].claveUnica);
+    expect(delMismoExpediente.map((r) => r.classeJudicial)).toEqual(['Casación', 'Aclaración']);
+  });
+
+  it('la clave de respaldo es estable: el mismo panel da la misma clave dos veces', () => {
+    // Si no lo fuera, cada pasada crearía registros nuevos y la deduplicación
+    // dejaría de servir para nada.
+    const primera = parsearResoluciones(cargar('peru-resultados.html'), 1);
+    const segunda = parsearResoluciones(cargar('peru-resultados.html'), 1);
+
+    expect(primera.map((r) => r.claveUnica)).toEqual(segunda.map((r) => r.claveUnica));
   });
 
   it('avisa por log del panel descartado en vez de tirarlo en silencio', () => {
@@ -139,8 +160,28 @@ describe('parser de resultados', () => {
 describe('paginador', () => {
   it('lee el total como PÁGINAS, que es lo que anuncia el portal', () => {
     // Confundirlo con un total de registros daría por terminada la extracción
-    // nada más superar las primeras páginas.
+    // nada más superar las primeras páginas. Y el fixture trae, a propósito, una
+    // sumilla con «de la Constitución Política de 1993» y «Decreto Legislativo
+    // 768»: con una detección laxa el total habría salido 1993 y la extracción
+    // se habría dado por completa en el 13 % del corpus, sin un error en el log.
     expect(detectarTotalPaginas(cargar('peru-resultados.html'))).toBe(15247);
+  });
+
+  it('no confunde una cita legal con el contador de páginas', () => {
+    const soloProsa = cheerio.load(
+      '<div><p>conforme al artículo 2 de la Constitución Política de 1993 y al Decreto Legislativo 768</p></div>',
+    );
+    expect(detectarTotalPaginas(soloProsa)).toBeUndefined();
+  });
+
+  it('lee el contador aunque el portal lo reparta entre varios nodos', () => {
+    // El portal pinta «Página:» en un span, la página actual dentro de un <input>
+    // —cuyo valor no es texto del nodo— y «de N» como texto suelto del padre. Por
+    // eso la detección no puede exigir un nodo hoja.
+    const repartido = cheerio.load(
+      '<div class="wrap"><div class="pag"><span>Página:</span><input value="3" /> de 4321 <a>IR</a></div></div>',
+    );
+    expect(detectarTotalPaginas(repartido)).toBe(4321);
   });
 
   it('lee la página activa del botón marcado', () => {

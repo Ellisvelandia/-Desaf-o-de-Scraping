@@ -171,8 +171,13 @@ function esEstado(valor: unknown): valor is EstadoEjecucion {
  */
 function identidadDocumento(fallo: Pick<Fallo, 'documento'>): string {
   const doc = fallo.documento;
-  if (doc === undefined) return '';
-  return texto(doc.id) || texto(doc.titulo);
+  // Comprobación de tipo, no solo de `undefined`: `failed.json` está pensado para
+  // que el operador lo lea y lo retoque, y también lo pudo escribir otra versión.
+  // Con un `"documento": null` o una cadena suelta, acceder a `.id` lanzaba desde
+  // DENTRO del catch que registra el fallo, y ese error tumbaba la Fase 2 entera
+  // justo en el camino cuyo trabajo es que un fallo no detenga la ejecución.
+  if (typeof doc !== 'object' || doc === null) return '';
+  return texto((doc as { id?: unknown }).id) || texto((doc as { titulo?: unknown }).titulo);
 }
 
 function aFallo(valor: unknown): Fallo | undefined {

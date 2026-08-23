@@ -52,10 +52,10 @@ describe('parsearProcesos sobre una página de resultados', () => {
     ]);
   });
 
-  it('rellena claveUnica con el propio número: esta variante ancla cada fila al CNJ', () => {
-    // El contrato de `types.ts` exige `claveUnica` siempre. Aquí no hay filas sin
-    // número —este parser las descarta antes—, así que la clave del scraper y el
-    // dato del tribunal coinciden y la persistencia indexa igual que siempre.
+  it('con número, claveUnica ES el número: no se inventa ningún índice propio', () => {
+    // El contrato de `types.ts` exige `claveUnica` siempre. Cuando el tribunal
+    // publica el número, la clave del scraper y el dato del tribunal coinciden.
+    // Las filas SIN número no se descartan: ver «segredo de justiça», más abajo.
     expect(procesos.map((p) => p.claveUnica)).toEqual([
       '0000001-11.2024.4.05.8300',
       '0000002-22.2023.4.05.8100',
@@ -269,7 +269,7 @@ describe('filas sin número CNJ (segredo de justiça)', () => {
     expect(procesos).toHaveLength(2);
     expect(procesos.map((p) => p.claveUnica)).toEqual([
       '0000001-11.2024.4.05.8300',
-      'sigilo:3333cccc4444dddd',
+      'sigilo:ca=3333cccc4444dddd',
     ]);
   });
 
@@ -322,7 +322,7 @@ describe('filas sin número CNJ (segredo de justiça)', () => {
 
     expect(procesos).toHaveLength(2);
     expect(procesos.every((p) => p.enSigilo === true)).toBe(true);
-    expect(procesos.map((p) => p.claveUnica)).toEqual(['sigilo:aaaa1111', 'sigilo:bbbb2222']);
+    expect(procesos.map((p) => p.claveUnica)).toEqual(['sigilo:ca=aaaa1111', 'sigilo:ca=bbbb2222']);
   });
 
   it('SIN cabeceras y sin ningún número sigue lanzando: el modo posicional no adivina', () => {

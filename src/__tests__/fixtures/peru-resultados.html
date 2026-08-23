@@ -32,8 +32,15 @@
         Buscar
       </button>
 
+      <!-- El contador tal como lo reparte el portal: el rótulo, la página actual
+           dentro de un <input> (cuyo valor NO es texto del nodo) y el total como
+           texto suelto del contenedor. Por eso la detección no puede exigir un
+           nodo hoja. -->
       <div class="col-md-12">
-        <span>Página: 1 de 15247</span>
+        <span>Página:</span>
+        <input type="text" name="formBuscador:pagInput" value="1" />
+        de 15247
+        <a href="#">IR</a>
       </div>
 
       <div class="col-md-12">
@@ -88,9 +95,15 @@
           <div class="row">
             <div class="col-sm-12 marginb">
               <div class="col-md-12 txtbold">Sumilla:</div>
+              <!-- Esta sumilla NO es de adorno: contiene «de 1993» y «de 768»,
+                   que es prosa jurídica peruana perfectamente ordinaria. Con una
+                   detección del total laxa («cualquier texto que acabe en de N»)
+                   el scraper habría creído que el corpus tiene 1993 páginas y
+                   habría dado la extracción por completa en el 13 % del total. -->
               <div class="col-md-12">
-                De acuerdo con lo dispuesto en el artículo 17 del Reglamento Nacional de Responsabilidad Civil, se
-                entiende que la víctima de un accidente de tránsito tendrá la categoría de tercero no ocupante.
+                De acuerdo con lo dispuesto en el artículo 17 del Reglamento Nacional de Responsabilidad Civil y en
+                el artículo 2 de la Constitución Política de 1993, se entiende que la víctima de un accidente de
+                tránsito tendrá la categoría de tercero no ocupante, conforme al Decreto Legislativo 768
               </div>
             </div>
           </div>
@@ -158,6 +171,56 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Paneles 4 y 5: EL MISMO expediente, y ninguno publica PDF (el portal
+           los muestra solo con «Ver Ficha»). Son dos resoluciones distintas del
+           mismo expediente —una casación y su aclaración— y deben quedar como
+           DOS registros. Con la clave `exp:<expediente>` a secas compartían
+           clave, la segunda se descartaba por duplicada y desaparecía sin
+           entrada en failed.json. -->
+      <div class="rf-p" id="formBuscador:data1:3:panel">
+        <div class="rf-p-hdr">
+          <table><tbody><tr>
+            <td><input type="checkbox" name="formBuscador:data1:3:sel" /></td>
+            <td><span>Casación</span></td>
+            <td><span>029269-2025</span></td>
+          </tr></tbody></table>
+        </div>
+        <div class="rf-p-b">
+          <div class="row">
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Fecha Resolución:</div>
+              <div class="col-md-12">04/03/2026</div>
+            </div>
+            <div class="col-sm-12 marginb">
+              <div class="col-md-12 txtbold">Sumilla:</div>
+              <div class="col-md-12">Se declara fundado el recurso de casación interpuesto.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rf-p" id="formBuscador:data1:4:panel">
+        <div class="rf-p-hdr">
+          <table><tbody><tr>
+            <td><input type="checkbox" name="formBuscador:data1:4:sel" /></td>
+            <td><span>Aclaración</span></td>
+            <td><span>029269-2025</span></td>
+          </tr></tbody></table>
+        </div>
+        <div class="rf-p-b">
+          <div class="row">
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Fecha Resolución:</div>
+              <div class="col-md-12">18/03/2026</div>
+            </div>
+            <div class="col-sm-12 marginb">
+              <div class="col-md-12 txtbold">Sumilla:</div>
+              <div class="col-md-12">Se aclara el fallo en cuanto al extremo de los intereses legales.</div>
+            </div>
+          </div>
         </div>
       </div>
 

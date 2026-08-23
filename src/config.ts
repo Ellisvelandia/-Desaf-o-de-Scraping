@@ -56,9 +56,14 @@ const PERFILES: Record<Objetivo, PerfilObjetivo> = {
  * antes de que existiera el segundo objetivo.
  */
 function resolverObjetivo(): Objetivo {
-  const crudo = (process.env.TARGET ?? process.argv.slice(2).find((a) => a === 'peru' || a === 'trf5') ?? '')
-    .trim()
-    .toLowerCase();
+  // El ARGUMENTO manda sobre la variable de entorno, porque es lo más específico:
+  // quien escribe `npm run peru` está eligiendo aquí y ahora. Con la precedencia
+  // al revés, un `TARGET` heredado del entorno —y basta con que llegue VACÍO,
+  // como cuando un job de CI declara `TARGET: ${{ inputs.objetivo }}` sin valor—
+  // ejecutaba el scraper brasileño bajo el comando `peru`, sin avisar de nada.
+  const porArgv = process.argv.slice(2).find((a) => a === 'peru' || a === 'trf5');
+  const porEnv = (process.env.TARGET ?? '').trim().toLowerCase();
+  const crudo = porArgv ?? (porEnv === '' ? undefined : porEnv);
   return crudo === 'peru' ? 'peru' : 'trf5';
 }
 

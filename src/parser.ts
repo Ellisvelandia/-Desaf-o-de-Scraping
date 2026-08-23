@@ -65,18 +65,34 @@ type Elemento = Seleccion extends ArrayLike<infer E> ? E : never;
 const SELECTOR_TABLA_MODERNA = '[id$=":processosTable"]';
 
 /**
- * El parámetro `ca=` del enlace a la ficha.
+ * Identificadores de expediente que la plantilla ANTIGUA pone en el enlace a la
+ * ficha, en orden de preferencia.
  *
- * Es la ÚNICA fuente de clave que le queda a una fila sin número CNJ. Y es una
- * fuente válida porque `ca` es un identificador de contenido que el portal asigna
- * al expediente: estable entre páginas y entre ejecuciones. Un control de
- * postback NO sirve para lo mismo, porque su nombre lleva dentro el índice de la
- * fila (`…:tabelaProcessos:3:…`), que cambia en cuanto cambia la página.
+ * `ca` es el mejor —es un identificador de contenido— pero **es el de la
+ * plantilla moderna**, y esta variante es la otra: la del objetivo del enunciado,
+ * cuya forma de fila `docs/protocol.md` declara NO verificada. Ahí el enlace se
+ * ha observado como `DetalheProcessoConsultaPublica.seam?idProcesso=902`. Exigir
+ * solo `ca=` dejaba fuera justo a esa plantilla: sus filas en segredo de justiça
+ * se seguían descartando, y una página entera de ellas seguía abortando la Fase 1.
  */
-const RE_PARAMETRO_CA = /[?&]ca=([^&#\s]+)/;
+const PARAMETROS_IDENTIFICADORES = ['ca', 'idProcesso', 'idProcessoTrf', 'idProcessoDoc'] as const;
 
 /** Prefijo de la clave derivada, para que no se pueda confundir con un número real. */
 const PREFIJO_SIGILO = 'sigilo:';
+
+/**
+ * Identificador de expediente presente en una URL, si hay alguno reconocible.
+ *
+ * Se devuelve con el nombre del parámetro delante (`idProcesso=902`) para que dos
+ * expedientes con el mismo valor en parámetros distintos no colisionen.
+ */
+function identificadorDeUrl(url: string): string | undefined {
+  for (const nombre of PARAMETROS_IDENTIFICADORES) {
+    const m = new RegExp(`[?&]${nombre}=([^&#\\s]+)`).exec(url);
+    if (m) return `${nombre}=${m[1]}`;
+  }
+  return undefined;
+}
 
 /** Número CNJ completo: NNNNNNN-DD.AAAA.J.TR.OOOO. Sirve de ancla estructural. */
 const RE_NUMERO_CNJ = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
@@ -359,7 +375,7 @@ interface Candidata {
 function enlaceFichaEnFila($: cheerio.CheerioAPI, fila: Elemento): string | undefined {
   for (const el of $(fila).find('a[href]').toArray()) {
     const href = $(el).attr('href') ?? '';
-    if (RE_PARAMETRO_CA.test(href)) return href;
+    if (identificadorDeUrl(href) !== undefined) return href;
   }
   return undefined;
 }
@@ -783,8 +799,15 @@ function construirProceso(
    * hace es escribir la clave derivada en `numeroProcesso`: la clave es un índice
    * de este scraper y el número es un dato del tribunal.
    */
-  const ca = RE_PARAMETRO_CA.exec(enlaceFichaEnFila($, fila) ?? '')?.[1];
-  const clave = numero ?? (ca === undefined ? undefined : `${PREFIJO_SIGILO}${ca}`);
+  // Se prefiere el enlace que `aperturaDeFila` ya eligió: es el control que la
+  // Fase 2 va a usar de verdad, así que derivar la clave de otro enlace de la
+  // misma fila podría indexar el registro por un expediente distinto del que
+  // luego se abre. Solo si esa apertura no es una URL utilizable se recurre a
+  // buscar el enlace por separado.
+  const urlApertura = apertura?.tipo === 'url' ? apertura.url : undefined;
+  const identificador =
+    identificadorDeUrl(urlApertura ?? '') ?? identificadorDeUrl(enlaceFichaEnFila($, fila) ?? '');
+  const clave = numero ?? (identificador === undefined ? undefined : `${PREFIJO_SIGILO}${identificador}`);
   // Sin número y sin enlace no hay clave posible: el registro no se podría
   // deduplicar ni volver a encontrar, así que guardarlo produciría duplicados en
   // cada pasada. El llamante avisa de cuántas filas cayeron por aquí.

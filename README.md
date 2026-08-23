@@ -278,7 +278,7 @@ src/
 │   ├── logger.ts         log.info / warn / error / debug con marca de tiempo relativa
 │   └── retry.ts          withRetry, sleep, esReintentable, calcularEspera,
 │                         ServidorSaturadoError, SesionCaducadaError, BloqueadoPorWafError
-└── __tests__/            Suite de Jest (9 ficheros, sin red)
+└── __tests__/            Suite de Jest (10 ficheros, sin red)
     └── fixtures/         Capturas REALES: portal-inicio.html (variante antigua, JSESSIONID
                           redactado), pje-nuevo-resultados.html y -trf1.html (listas de dos
                           instancias) y pje-nuevo-ficha.html. Más fixtures sintéticos de
@@ -418,7 +418,7 @@ npm test        # jest + ts-jest
 npm run lint    # tsc --noEmit, comprobación de tipos en modo estricto
 ```
 
-El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. **Nueve suites, todas sin red.** El recuento exacto lo da `npm test`; aquí no se repite un número que envejece con cada commit.
+El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. **Diez suites, todas sin red.** El recuento exacto lo da `npm test`; aquí no se repite un número que envejece con cada commit.
 
 | Suite | Qué fija |
 |---|---|
@@ -431,6 +431,7 @@ El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node
 | `peru.test.ts` | El objetivo peruano: indexación por rótulo (no por posición), el total leído como **páginas** y no como registros, la clave derivada del `uuid` cuando falta el expediente, que «Ver Ficha» **no** se emita como URL porque es un postback, el descarte ruidoso de un panel sin clave, y el protocolo parcial de JSF 2 —CDATA, `<redirect>` y el rechazo de un id que el documento vigente no tiene—. |
 | `paginacion.test.ts` | El contrato de navegación, que antes no tenía ninguna prueba: lectura del `rich:datascroller` (id, formulario, página activa y ventana), que los valores simbólicos (`first`, `next`) no se confundan con números de página, que el `onclick` se analice aunque `parameters` no sea la primera clave, y que el control «pulsado» no sea el id del scroller —enviaría dos veces ese nombre y el datascroller recibiría un texto donde espera un número—. |
 | `reanudacion.test.ts` | Que reanudar exija el **mismo criterio de búsqueda**: la página 50 de una búsqueda no es la página 50 de otra. |
+| `objetivo.test.ts` | Qué portal se activa y dónde escribe: que el argumento explícito mande sobre `TARGET` (un `TARGET` vacío heredado de un CI hacía que `npm run peru` corriera el scraper brasileño en silencio), que `trf5` conserve **exactamente** su carpeta de salida histórica y que `peru` use la suya, para no mezclar dos jurisdicciones en un mismo `records.json`. |
 
 Dos decisiones del arnés que conviene conocer:
 

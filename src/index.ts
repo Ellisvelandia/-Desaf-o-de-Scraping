@@ -73,6 +73,15 @@ function criteriosPeru(): CriteriosPeru {
  * lo trata como una elección inválida.
  */
 function preguntar(texto: string): Promise<string> {
+  // Cortocircuito ANTES de crear la interfaz. El respaldo por `close` solo actúa
+  // una vez por proceso: una interfaz nueva sobre un stdin que ya emitió `end` no
+  // vuelve a emitir `close`, así que a partir de la segunda pregunta la promesa
+  // quedaba pendiente para siempre. Node vaciaba el bucle de eventos y el proceso
+  // salía con código 0 sin hacer nada, que es un fallo silencioso con aspecto de
+  // éxito. Con la comprobación, las preguntas restantes resuelven vacío al
+  // instante y el menú termina por su tope de intentos, con un mensaje.
+  if (process.stdin.readableEnded) return Promise.resolve('');
+
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolver) => {
     // El guardia NO es decorativo, y su ausencia rompía el menú entero: `rl.close()`
