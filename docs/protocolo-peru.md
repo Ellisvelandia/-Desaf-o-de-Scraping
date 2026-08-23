@@ -153,6 +153,29 @@ En la primera petición de la captura, el servlet respondió **`503`**. Eso conf
 endpoint es el correcto y que el portal limita la tasa de descargas, que es precisamente el
 requisito 3 del enunciado. `withRetry` lo trata como reintentable, con retroceso exponencial.
 
+### Descarga verificada byte a byte (2026-08-23, segunda sesión)
+
+Con la salida por Perú restablecida se pidieron **tres** resoluciones distintas por `GET` con las
+cookies de la sesión —exactamente lo que hace `ServicioDescarga`—, con 3 s de cortesía entre
+peticiones:
+
+| Estado | Content-Type | Bytes | Primeros 5 bytes | SHA-256 (primeros 16 hex) |
+|---|---|---:|---|---|
+| `200` | `application/octet-stream` | 291.432 | `%PDF-` | `bbb0c60f8e72a20f` |
+| `200` | `application/octet-stream` | 572.048 | `%PDF-` | `cffcb9f77d922d81` |
+| `200` | `application/octet-stream` | 468.180 | `%PDF-` | `ff708ba0415142db` |
+
+Tres tamaños y tres huellas distintas: queda descartado el modo de fallo silencioso de «bajar N
+veces la misma página de error y darla por buena». Dos detalles que importan al scraper:
+
+- **El content-type es `application/octet-stream`, no `application/pdf`.** `ServicioDescarga.validar`
+  ya lo acepta: solo rechaza HTML por content-type, y la decisión final es de los bytes `%PDF-`.
+- **Basta el GET con cookies.** Sin cabeceras de navegación especiales: el mecanismo que implementa
+  el scraper es suficiente.
+
+Los `uuid` concretos no se anotan: identifican documentos judiciales ajenos y no aportan nada a la
+reproducibilidad (cada búsqueda publica los suyos).
+
 ---
 
 ## 5. Paginación — petición parcial de JSF 2
@@ -215,6 +238,6 @@ en vez de aplicar una actualización vacía y seguir paginando sobre la misma p�
 | Total anunciado como páginas | ✅ Verificado (15.247) |
 | Endpoint de descarga del PDF | ✅ Verificado (existe y limita la tasa: `503`) |
 | POST parcial de paginación y sus parámetros | ✅ Verificado (interceptado, y la página 2 y la 5 devolvieron expedientes distintos) |
-| Descarga de un PDF completo y validado byte a byte | ❌ **No ejecutada**: exige que el proceso de Node salga por Perú |
+| Descarga de un PDF completo y validado byte a byte | ✅ Verificada (tres PDF reales: `200`, firma `%PDF-`, tamaños y SHA-256 distintos; ver arriba). Pendiente solo la ejecución desde **Node**, que exige VPN de ámbito de sistema |
 | Recorrido de las 15.247 páginas | ❌ **No ejecutado**, por lo mismo |
 | Contenido de la ficha («Ver Ficha») | ❌ No capturado: es un postback RichFaces y no se ha decodificado |
