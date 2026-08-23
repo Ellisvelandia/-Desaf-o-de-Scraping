@@ -49,10 +49,42 @@ export type EstadoProceso = 'pendiente' | 'completado' | 'sin_documentos' | 'fal
 /** Un proceso judicial extraído de la lista de resultados. */
 export interface ProcesoJudicial {
   /**
-   * Número único del proceso (formato CNJ NNNNNNN-DD.AAAA.J.TR.OOOO).
-   * Es la clave de deduplicación: la asigna el propio poder judicial.
+   * Clave de deduplicación DEL SCRAPER. Siempre presente.
+   *
+   * POR QUÉ existen dos campos y no uno: `numeroProcesso` es un DATO DEL PORTAL
+   * —lo asigna el poder judicial y aparece tal cual en el expediente— mientras
+   * que `claveUnica` es un ÍNDICE INTERNO, un artefacto de este scraper que solo
+   * sirve para no guardar dos veces la misma fila. Confundirlos es exactamente
+   * lo que lleva a inventar números de proceso: al necesitar una clave para las
+   * filas que no publican número, la tentación es rellenar `numeroProcesso` con
+   * algo derivado, y desde ese momento el JSON y el CSV publican un número CNJ
+   * que no existe en ningún tribunal.
+   *
+   * Vale `numeroProcesso` cuando el portal lo publica. Cuando no, se deriva del
+   * enlace a la ficha —el parámetro `ca=` de `apertura.url`, que es el
+   * identificador con el que el propio portal abre ese expediente— y lleva el
+   * prefijo `sigilo:` para que de un vistazo no se pueda confundir con un
+   * número real.
    */
-  numeroProcesso: string;
+  claveUnica: string;
+  /**
+   * Número único del proceso (formato CNJ NNNNNNN-DD.AAAA.J.TR.OOOO), tal como
+   * lo publica el portal.
+   *
+   * OPCIONAL a propósito: los procesos en segredo de justiça NO lo publican (en
+   * el fixture real del TRF1 son 8 de sus 30 filas). Esas filas se emiten igual
+   * —con `enSigilo`, con su `claveUnica` y con todo lo demás que sí publican:
+   * clase judicial, sigla, asunto y partes—, porque descartarlas tiraba el 27 %
+   * de los resultados. Lo que no se hace nunca es rellenar este campo con un
+   * sustituto: si el portal no lo dice, aquí no aparece.
+   */
+  numeroProcesso?: string;
+  /**
+   * True cuando la fila no publicó número CNJ, que es como el PJe presenta los
+   * expedientes en segredo de justiça. Es una inferencia sobre la evidencia
+   * disponible (la ausencia del número), no un campo que el portal rotule.
+   */
+  enSigilo?: boolean;
   /** Órgano juzgador / vara, si el portal lo publica. */
   orgaoJulgador?: string;
   /** Clase judicial (procedimiento). */
@@ -102,7 +134,15 @@ export interface EstadoEjecucion {
 
 /** Registro de un fallo para poder reintentarlo en otra pasada. */
 export interface Fallo {
-  numeroProcesso: string;
+  /**
+   * A qué se refiere el fallo: la `claveUnica` del proceso afectado, o un
+   * `pagina-N` cuando lo que falló fue una página entera de resultados.
+   *
+   * Es la clave del scraper y no el número CNJ por el mismo motivo que en
+   * `ProcesoJudicial`: un proceso en sigilo también puede fallar al descargarse,
+   * y tiene que poder anotarse sin inventarle un número.
+   */
+  claveUnica: string;
   /** Qué se intentaba: 'documento' | 'pagina' | 'ficha'. */
   fase: string;
   motivo: string;

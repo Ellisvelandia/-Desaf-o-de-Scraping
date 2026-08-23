@@ -112,7 +112,10 @@ export class Scraper {
       try {
         const lote = parsearProcesos(sesion.documento, pagina);
         nuevosEnPagina = this.persistencia.anadirProcesos(procesos, lote);
-        for (const p of lote) vistosAhora.add(p.numeroProcesso);
+        // Por `claveUnica` y no por el número: los procesos en sigilo no tienen
+        // número, y contarlos como uno solo (undefined) frenaría la extracción
+        // antes de tiempo al comparar contra el total anunciado.
+        for (const p of lote) vistosAhora.add(p.claveUnica);
         ultimaCompletada = pagina;
         log.info(
           `Página ${pagina}: ${lote.length} filas, ${nuevosEnPagina} nuevas ` +
@@ -134,7 +137,7 @@ export class Scraper {
       } catch (e) {
         if (e instanceof EstructuraInesperadaError) {
           log.error(`La estructura de la tabla cambió: ${e.message}`);
-          this.persistencia.registrarFallo({ numeroProcesso: `pagina-${pagina}`, fase: 'pagina', motivo: e.message });
+          this.persistencia.registrarFallo({ claveUnica: `pagina-${pagina}`, fase: 'pagina', motivo: e.message });
           break;
         }
         throw e;
@@ -262,14 +265,21 @@ export class Scraper {
         break;
       }
 
+      /**
+       * Cómo se nombra este proceso en los logs: su número CNJ si el tribunal lo
+       * publica y, si es un expediente en segredo de justiça, su `claveUnica`.
+       * Nunca `undefined`, que es lo que saldría al interpolar el número a secas.
+       */
+      const etiqueta = proceso.numeroProcesso ?? proceso.claveUnica;
+
       // Los documentos de un proceso están en SU ficha, no en la lista. Leerlos
       // del documento vigente sin haber navegado atribuiría a todos los procesos
       // los mismos enlaces de la página de resultados, que es peor que no tener
       // ninguno: produce descargas equivocadas con aspecto de correctas.
       if (!proceso.apertura) {
         const motivo = 'La fila de la lista no publica de forma inequívoca cómo abrir la ficha del proceso';
-        log.warn(`${proceso.numeroProcesso}: ${motivo}`);
-        this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+        log.warn(`${etiqueta}: ${motivo}`);
+        this.persistencia.registrarFallo({ claveUnica: proceso.claveUnica, fase: 'ficha', motivo });
         proceso.estado = 'fallido';
         this.persistencia.guardarProcesos(procesos);
         continue;
@@ -285,8 +295,8 @@ export class Scraper {
         await this.abrirFicha(sesion, proceso);
       } catch (e) {
         const motivo = e instanceof Error ? e.message : String(e);
-        log.error(`No se pudo abrir la ficha de ${proceso.numeroProcesso}: ${motivo}`);
-        this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+        log.error(`No se pudo abrir la ficha de ${etiqueta}: ${motivo}`);
+        this.persistencia.registrarFallo({ claveUnica: proceso.claveUnica, fase: 'ficha', motivo });
         proceso.estado = 'fallido';
         this.persistencia.guardarProcesos(procesos);
 
@@ -319,7 +329,7 @@ export class Scraper {
         if (ficha.camposExtra) proceso.camposExtra = { ...(proceso.camposExtra ?? {}), ...ficha.camposExtra };
       } else {
         log.warn(
-          `${proceso.numeroProcesso}: la página abierta no trae ninguna de las tablas de una ficha; ` +
+          `${etiqueta}: la página abierta no trae ninguna de las tablas de una ficha; ` +
             'se lee con el parser genérico',
         );
         documentos = parsearDocumentos(sesion.documento);
@@ -344,8 +354,8 @@ export class Scraper {
           // a la lista), y el fallo se volvería invisible. Se registra y se deja
           // pendiente para la siguiente pasada.
           const motivo = 'La página abierta no es una ficha reconocible y no publica ningún documento';
-          log.warn(`${proceso.numeroProcesso}: ${motivo}`);
-          this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+          log.warn(`${etiqueta}: ${motivo}`);
+          this.persistencia.registrarFallo({ claveUnica: proceso.claveUnica, fase: 'ficha', motivo });
           proceso.estado = 'fallido';
         }
         this.persistencia.guardarProcesos(procesos);
@@ -365,8 +375,8 @@ export class Scraper {
           if (!yaEstaba) bajados++;
         } catch (e) {
           const motivo = e instanceof Error ? e.message : String(e);
-          log.error(`Fallo al descargar "${documento.titulo}" de ${proceso.numeroProcesso}: ${motivo}`);
-          this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'documento', motivo });
+          log.error(`Fallo al descargar "${documento.titulo}" de ${etiqueta}: ${motivo}`);
+          this.persistencia.registrarFallo({ claveUnica: proceso.claveUnica, fase: 'documento', motivo });
           // Un documento fallido no detiene el run: se registra y se sigue, como pide el desafío.
         }
         await sleep(CONFIG.delayBetweenDownloadsMs);

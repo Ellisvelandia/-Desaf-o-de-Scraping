@@ -24,9 +24,13 @@ const CODIGO_BOM = 0xfeff;
 const BOM_UTF8 = String.fromCharCode(CODIGO_BOM);
 
 /**
- * Forma en disco de records.json: objeto indexado por numeroProcesso, no array.
+ * Forma en disco de records.json: objeto indexado por `claveUnica`, no array.
  * Da búsqueda O(1) al deduplicar y hace los duplicados imposibles por
  * construcción, en vez de confiar en que nadie haga push dos veces.
+ *
+ * La clave es `claveUnica` y no `numeroProcesso` porque hay procesos que el
+ * portal publica SIN número (segredo de justiça). Con el número como índice,
+ * esas filas solo tenían dos destinos: perderse, o forzar a inventarles uno.
  */
 type RegistroProcesos = Record<string, ProcesoJudicial>;
 
@@ -42,7 +46,14 @@ interface ColumnaCsv {
  * cabecera variable rompe cualquier consumidor del CSV.
  */
 const COLUMNAS: ReadonlyArray<ColumnaCsv> = [
-  { cabecera: 'numeroProcesso', valor: (p) => p.numeroProcesso },
+  // `claveUnica` va primera porque es el índice del fichero: es la columna con la
+  // que una fila del CSV se vuelve a encontrar en `records.json`.
+  { cabecera: 'claveUnica', valor: (p) => p.claveUnica ?? '' },
+  // Y `numeroProcesso` justo después, VACÍO cuando el portal no lo publica. La
+  // celda en blanco es el dato correcto: significa "el tribunal no lo dice", y la
+  // columna de al lado explica por qué.
+  { cabecera: 'numeroProcesso', valor: (p) => p.numeroProcesso ?? '' },
+  { cabecera: 'enSigilo', valor: (p) => (p.enSigilo === true ? 'true' : 'false') },
   { cabecera: 'orgaoJulgador', valor: (p) => p.orgaoJulgador ?? '' },
   { cabecera: 'classeJudicial', valor: (p) => p.classeJudicial ?? '' },
   { cabecera: 'dataAutuacao', valor: (p) => p.dataAutuacao ?? '' },
@@ -85,25 +96,51 @@ function escaparCsv(valor: string): string {
   return `"${valor.replace(/"/g, '""')}"`;
 }
 
+/** Devuelve la cadena recortada, o '' si no era una cadena con contenido. */
+function texto(valor: unknown): string {
+  return typeof valor === 'string' ? valor.trim() : '';
+}
+
 /**
- * Guarda de tipo para lo que sale de JSON.parse: el fichero lo pudo escribir
- * una versión anterior del scraper, así que su forma se comprueba, no se asume.
+ * Valida y normaliza lo que sale de JSON.parse, o devuelve undefined.
+ *
+ * El fichero lo pudo escribir una versión anterior del scraper, así que su forma
+ * se comprueba, no se asume. Y hace además una MIGRACIÓN: un `records.json` de
+ * un formato anterior está indexado por número de proceso y no trae
+ * `claveUnica`, así que aquí se deriva del número. Sin esto, una actualización
+ * del scraper descartaría en silencio todos los procesos ya extraídos —incluido
+ * su estado `completado`— y la pasada siguiente volvería a bajarlo todo.
  */
-function esProceso(valor: unknown): valor is ProcesoJudicial {
-  if (typeof valor !== 'object' || valor === null) return false;
+function aProceso(valor: unknown): ProcesoJudicial | undefined {
+  if (typeof valor !== 'object' || valor === null) return undefined;
   const candidato = valor as {
+    claveUnica?: unknown;
     numeroProcesso?: unknown;
     partes?: unknown;
     documentos?: unknown;
     archivos?: unknown;
   };
-  if (typeof candidato.numeroProcesso !== 'string' || candidato.numeroProcesso.trim().length === 0) return false;
+
+  const numero = texto(candidato.numeroProcesso);
+  // La clave del contrato manda; el número solo es el respaldo del formato viejo.
+  const clave = texto(candidato.claveUnica) || numero;
+  if (clave.length === 0) return undefined;
+
   // Los campos de colección se declaran array en el contrato y el resto del
   // scraper los recorre sin volver a mirar. Si el fichero trae otra cosa, el
   // registro entero es sospechoso y se descarta aquí, que es la frontera donde
   // el módulo promete que un fichero corrupto degrada en vez de reventar.
   const coleccionValida = (v: unknown): boolean => v === undefined || Array.isArray(v);
-  return coleccionValida(candidato.partes) && coleccionValida(candidato.documentos) && coleccionValida(candidato.archivos);
+  if (!coleccionValida(candidato.partes)) return undefined;
+  if (!coleccionValida(candidato.documentos)) return undefined;
+  if (!coleccionValida(candidato.archivos)) return undefined;
+
+  const proceso: ProcesoJudicial = { ...(valor as ProcesoJudicial), claveUnica: clave };
+  // Un `numeroProcesso` vacío o no-cadena se omite en vez de propagarse: el
+  // contrato dice que ese campo, si está, es el número que publicó el tribunal.
+  if (numero.length > 0) proceso.numeroProcesso = numero;
+  else delete proceso.numeroProcesso;
+  return proceso;
 }
 
 function esEstado(valor: unknown): valor is EstadoEjecucion {
@@ -118,10 +155,19 @@ function esEstado(valor: unknown): valor is EstadoEjecucion {
   );
 }
 
-function esFallo(valor: unknown): valor is Fallo {
-  if (typeof valor !== 'object' || valor === null) return false;
-  const candidato = valor as { numeroProcesso?: unknown; fase?: unknown };
-  return typeof candidato.numeroProcesso === 'string' && typeof candidato.fase === 'string';
+/**
+ * Valida y normaliza una entrada de failed.json, o devuelve undefined.
+ *
+ * Acepta también el `numeroProcesso` del formato anterior como clave: un
+ * failed.json escrito por una versión previa no debe perder los reintentos ya
+ * contados solo porque el campo cambió de nombre.
+ */
+function aFallo(valor: unknown): Fallo | undefined {
+  if (typeof valor !== 'object' || valor === null) return undefined;
+  const candidato = valor as { claveUnica?: unknown; numeroProcesso?: unknown; fase?: unknown };
+  const clave = texto(candidato.claveUnica) || texto(candidato.numeroProcesso);
+  if (clave.length === 0 || typeof candidato.fase !== 'string') return undefined;
+  return { ...(valor as Fallo), claveUnica: clave };
 }
 
 export class Persistencia {
@@ -145,21 +191,25 @@ export class Persistencia {
     if (crudo === undefined) return mapa;
 
     if (typeof crudo !== 'object' || crudo === null || Array.isArray(crudo)) {
-      log.warn(`${this.rutaProcesos} no es un objeto indexado por número de proceso: se empieza de cero`);
+      log.warn(`${this.rutaProcesos} no es un objeto indexado por clave de proceso: se empieza de cero`);
       return mapa;
     }
 
     let descartados = 0;
     for (const valor of Object.values(crudo as Record<string, unknown>)) {
-      if (!esProceso(valor)) {
+      const proceso = aProceso(valor);
+      if (proceso === undefined) {
         descartados++;
         continue;
       }
       // Ante discrepancia entre la clave del fichero y el campo, manda el campo:
-      // numeroProcesso es el dato del portal, la clave es solo un índice.
-      mapa.set(valor.numeroProcesso, valor);
+      // la clave del objeto JSON es solo un índice, y `aProceso` ya ha decidido
+      // cuál es la buena (incluida la derivada de un fichero de formato anterior).
+      mapa.set(proceso.claveUnica, proceso);
     }
-    if (descartados > 0) log.warn(`${descartados} entrada(s) de records.json sin número de proceso: descartadas`);
+    if (descartados > 0) {
+      log.warn(`${descartados} entrada(s) de records.json sin clave utilizable (ni claveUnica ni número): descartadas`);
+    }
     log.debug(`Procesos cargados: ${mapa.size}`);
     return mapa;
   }
@@ -187,23 +237,34 @@ export class Persistencia {
     for (const proceso of nuevos) {
       // El parser puede devolver una fila degenerada (cabecera, fila "sin
       // resultados"); sin clave no hay deduplicación posible, así que se ignora.
-      const clave = typeof proceso.numeroProcesso === 'string' ? proceso.numeroProcesso.trim() : '';
+      // Se acepta el número como respaldo por si el registro viene de un
+      // llamador que no rellenó `claveUnica`.
+      const numero = texto(proceso.numeroProcesso);
+      const clave = texto(proceso.claveUnica) || numero;
       if (clave.length === 0) {
-        log.warn('Proceso sin numeroProcesso: se ignora');
+        log.warn('Proceso sin claveUnica ni numeroProcesso: se ignora');
         continue;
       }
-      // Deduplicación por la clave que asigna el poder judicial: es estable
-      // entre páginas y entre ejecuciones, a diferencia de cualquier id propio.
+      // Deduplicación por `claveUnica`: el número CNJ cuando el tribunal lo
+      // publica —estable entre páginas y entre ejecuciones—, y el identificador
+      // derivado del enlace a la ficha cuando el proceso está en sigilo. Dos
+      // procesos en sigilo distintos traen `ca=` distintos y no se funden.
       if (procesos.has(clave)) continue;
 
-      procesos.set(clave, {
+      const registro: ProcesoJudicial = {
         ...proceso,
-        numeroProcesso: clave,
+        claveUnica: clave,
         // vistoEn marca el primer avistamiento: solo se sella al insertar, nunca
         // se refresca, o dejaría de significar "primera vez".
         vistoEn: proceso.vistoEn ?? ahora,
         estado: proceso.estado ?? 'pendiente',
-      });
+      };
+      // El número del portal, si lo hay, se guarda normalizado; si no lo hay, el
+      // campo se omite en lugar de quedarse con la clave del scraper dentro.
+      if (numero.length > 0) registro.numeroProcesso = numero;
+      else delete registro.numeroProcesso;
+
+      procesos.set(clave, registro);
       insertados++;
     }
     return insertados;
@@ -240,23 +301,28 @@ export class Persistencia {
     // Se normalizan los contadores: una entrada escrita por una versión anterior
     // podría no traer `intentos`, y entonces el incremento daría NaN y el
     // criterio de "cuántas veces reintentar antes de rendirse" dejaría de existir.
-    return crudo.filter(esFallo).map((fallo) => ({
-      ...fallo,
-      intentos: typeof fallo.intentos === 'number' && fallo.intentos > 0 ? fallo.intentos : 1,
-      ultimoIntentoEn: typeof fallo.ultimoIntentoEn === 'string' ? fallo.ultimoIntentoEn : new Date(0).toISOString(),
-    }));
+    return crudo
+      .map(aFallo)
+      .filter((fallo): fallo is Fallo => fallo !== undefined)
+      .map((fallo) => ({
+        ...fallo,
+        intentos: typeof fallo.intentos === 'number' && fallo.intentos > 0 ? fallo.intentos : 1,
+        ultimoIntentoEn: typeof fallo.ultimoIntentoEn === 'string' ? fallo.ultimoIntentoEn : new Date(0).toISOString(),
+      }));
   }
 
   /**
    * Anota un fallo para reintentarlo en otra pasada.
    *
-   * La clave es (numeroProcesso, fase): el mismo proceso puede fallar al listar
-   * su ficha y también al descargar un documento, y son dos problemas distintos.
+   * La clave es (claveUnica, fase): el mismo proceso puede fallar al listar su
+   * ficha y también al descargar un documento, y son dos problemas distintos.
+   * Se indexa por `claveUnica` y no por el número CNJ para que un proceso en
+   * sigilo —que no tiene número— también pueda anotarse y reintentarse.
    */
   registrarFallo(fallo: Omit<Fallo, 'intentos' | 'ultimoIntentoEn'>): void {
     const fallos = this.cargarFallos();
     const ahora = new Date().toISOString();
-    const existente = fallos.find((f) => f.numeroProcesso === fallo.numeroProcesso && f.fase === fallo.fase);
+    const existente = fallos.find((f) => f.claveUnica === fallo.claveUnica && f.fase === fallo.fase);
 
     if (existente) {
       // Se acumula en la entrada existente en vez de duplicar: así el contador
@@ -269,7 +335,7 @@ export class Persistencia {
     }
 
     this.escribirAtomico(this.rutaFallos, JSON.stringify(fallos, null, 2));
-    log.debug(`Fallo registrado: ${fallo.numeroProcesso} [${fallo.fase}]`);
+    log.debug(`Fallo registrado: ${fallo.claveUnica} [${fallo.fase}]`);
   }
 
   // --- export --------------------------------------------------------------

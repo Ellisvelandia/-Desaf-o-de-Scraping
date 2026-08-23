@@ -52,6 +52,17 @@ describe('parsearProcesos sobre una página de resultados', () => {
     ]);
   });
 
+  it('rellena claveUnica con el propio número: esta variante ancla cada fila al CNJ', () => {
+    // El contrato de `types.ts` exige `claveUnica` siempre. Aquí no hay filas sin
+    // número —este parser las descarta antes—, así que la clave del scraper y el
+    // dato del tribunal coinciden y la persistencia indexa igual que siempre.
+    expect(procesos.map((p) => p.claveUnica)).toEqual([
+      '0000001-11.2024.4.05.8300',
+      '0000002-22.2023.4.05.8100',
+      '0000003-33.2022.4.05.8200',
+    ]);
+  });
+
   it('mapea clase y órgano por su cabecera, con los acentos del portugués intactos', () => {
     expect(procesos[0].classeJudicial).toBe('PROCEDIMENTO COMUM CÍVEL');
     expect(procesos[0].orgaoJulgador).toBe('1ª Vara Federal de Pernambuco');

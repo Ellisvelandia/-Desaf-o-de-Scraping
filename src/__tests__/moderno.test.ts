@@ -98,6 +98,18 @@ describe('parsearProcesosModerno sobre la lista real del TRF5', () => {
     expect(new Set(procesos.map((p) => p.numeroProcesso)).size).toBe(procesos.length);
   });
 
+  it('aquí ninguna fila está en sigilo: las 30 publican número y la clave ES el número', () => {
+    // El contraste con el fixture del TRF1 es lo que da valor a esta prueba: el
+    // camino de sigilo no se activa por su cuenta cuando el portal sí publica
+    // los números, así que `claveUnica` no se aparta nunca del dato del tribunal.
+    for (const p of procesos) {
+      expect(p.enSigilo).toBeUndefined();
+      expect(p.claveUnica).toBe(p.numeroProcesso);
+      expect(p.claveUnica).not.toMatch(/^sigilo:/);
+    }
+    expect(new Set(procesos.map((p) => p.claveUnica)).size).toBe(30);
+  });
+
   it('descompone la celda compuesta del primer proceso en sus cinco piezas', () => {
     const primero = procesos[0];
     expect(primero).toBeDefined();
@@ -147,20 +159,72 @@ describe('parsearProcesosModerno sobre OTRA instancia (TRF1)', () => {
   const $ = cargar('pje-nuevo-resultados-trf1.html');
   const procesos = parsearProcesosModerno($, 1);
 
-  it('extrae 22 procesos de 30 filas: 8 no publican número y no se inventan', () => {
+  it('extrae las 30 filas: 22 con número y 8 en segredo de justiça, ninguna perdida', () => {
     expect($(SELECTOR_FILAS)).toHaveLength(30);
     // Comprobado sobre el HTML: en 8 filas el `<b>` dice solo «PJEC - Assunto»,
-    // sin número CNJ, y su columna de movimentación llega vacía. `numeroProcesso`
-    // es la clave de deduplicación de todo el scraper, así que esas filas se
-    // omiten en lugar de emitir un registro con una clave inventada.
-    expect(procesos).toHaveLength(22);
+    // sin número CNJ, y su columna de movimentación llega vacía. Antes se
+    // descartaban con una traza de depuración y se perdía el 27 % de la página;
+    // ahora salen, porque el resto de su información sí es pública.
+    expect(procesos).toHaveLength(30);
+    expect(procesos.filter((p) => p.enSigilo === true)).toHaveLength(8);
+    expect(procesos.filter((p) => p.numeroProcesso !== undefined)).toHaveLength(22);
   });
 
-  it('todos los números casan el patrón CNJ, con la numeración propia del TRF1', () => {
-    for (const p of procesos) expect(p.numeroProcesso).toMatch(RE_CNJ);
+  it('los 22 con número casan el patrón CNJ, con la numeración propia del TRF1', () => {
+    const conNumero = procesos.filter((p) => p.numeroProcesso !== undefined);
+
+    expect(conNumero).toHaveLength(22);
+    for (const p of conNumero) expect(p.numeroProcesso).toMatch(RE_CNJ);
     // `.4.01.` es el segmento de tribunal del TRF1; en el fixture del TRF5 es
     // `.4.05.`. Que las dos pasen el mismo parser es el objeto de esta prueba.
-    expect(procesos.every((p) => p.numeroProcesso.includes('.4.01.'))).toBe(true);
+    expect(conNumero.every((p) => p.numeroProcesso?.includes('.4.01.'))).toBe(true);
+  });
+
+  it('los 8 en sigilo NO traen número: ni inventado ni copiado de la clave', () => {
+    const sigilosos = procesos.filter((p) => p.enSigilo === true);
+
+    expect(sigilosos).toHaveLength(8);
+    for (const p of sigilosos) {
+      // Lo importante de todo el cambio: la ausencia del dato oficial se emite
+      // como ausencia. Un `numeroProcesso` con la clave dentro publicaría en el
+      // CSV un número CNJ que no existe en ningún tribunal.
+      expect(p.numeroProcesso).toBeUndefined();
+      expect(p.claveUnica).toMatch(/^sigilo:[0-9a-f]{8,}$/);
+      expect(p.claveUnica).not.toMatch(RE_CNJ);
+    }
+  });
+
+  it('de las filas en sigilo se extrae TODO lo demás que el portal sí publica', () => {
+    // La fila no publica número, pero sí clase judicial, sigla, asunto, las dos
+    // partes y el enlace a su ficha. Emitir un registro con solo la clave sería
+    // otra forma de tirar datos.
+    const primero = procesos.filter((p) => p.enSigilo === true)[0];
+    expect(primero).toBeDefined();
+    if (!primero) return;
+
+    expect(primero.classeJudicial).toBe('PROCEDIMENTO COMUM CÍVEL');
+    expect(primero.camposExtra?.['sigla']).toBe('ProceComCiv');
+    expect(primero.camposExtra?.['assunto']).toBe('Vícios de Construção');
+    expect(primero.partes).toEqual([
+      { papel: 'ATIVO', nombre: 'CONDOMINIO EDIFICIO OURO PRETO' },
+      { papel: 'PASSIVO', nombre: 'M.R.CONSTRUCOES E EMPREENDIMENTOS IMOBILIARIOS LTDA - EPP e outros (1)' },
+    ]);
+    // Y la ficha se puede abrir: es de donde sale su clave.
+    expect(primero.apertura?.tipo).toBe('url');
+    const url = primero.apertura?.tipo === 'url' ? primero.apertura.url : '';
+    expect(url).toContain(primero.claveUnica.replace('sigilo:', ''));
+  });
+
+  it('las 30 claves son distintas entre sí y ninguna está vacía', () => {
+    // Dos procesos en sigilo con la misma clave se fundirían en uno al
+    // persistirse, que es el mismo agujero de datos por otra puerta.
+    for (const p of procesos) {
+      expect(typeof p.claveUnica).toBe('string');
+      expect(p.claveUnica).toBeDefined();
+      expect(p.claveUnica.length).toBeGreaterThan(0);
+      expect(p.claveUnica.trim()).toBe(p.claveUnica);
+    }
+    expect(new Set(procesos.map((p) => p.claveUnica)).size).toBe(30);
   });
 
   it('descompone la celda compuesta igual que en el TRF5, con otros ids j_idNNN', () => {

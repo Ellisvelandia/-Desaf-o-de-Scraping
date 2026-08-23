@@ -21,9 +21,22 @@ const OUTPUT_ORIGINAL = CONFIG.outputDir;
 let temporal: string;
 let persistencia: Persistencia;
 
-/** Proceso mínimo válido; cada prueba retoca solo lo que le interesa. */
+/**
+ * Proceso mínimo válido; cada prueba retoca solo lo que le interesa.
+ *
+ * En un proceso con número, `claveUnica` ES el número: es lo que emiten los dos
+ * parsers, y así estas pruebas siguen ejerciendo la deduplicación por número.
+ */
 function proceso(numero: string, extra: Partial<ProcesoJudicial> = {}): ProcesoJudicial {
-  return { numeroProcesso: numero, classeJudicial: 'PROCEDIMENTO COMUM CÍVEL', ...extra };
+  return { claveUnica: numero, numeroProcesso: numero, classeJudicial: 'PROCEDIMENTO COMUM CÍVEL', ...extra };
+}
+
+/**
+ * Proceso en segredo de justiça: clave derivada del `ca=` de su ficha, sin
+ * número, tal como lo emite `parserModerno`.
+ */
+function procesoEnSigilo(ca: string, extra: Partial<ProcesoJudicial> = {}): ProcesoJudicial {
+  return { claveUnica: `sigilo:${ca}`, enSigilo: true, classeJudicial: 'PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL', ...extra };
 }
 
 /** Rutas de todos los ficheros que hay bajo el directorio de salida. */
@@ -116,6 +129,59 @@ describe('anadirProcesos', () => {
     expect(recargado.size).toBe(1);
     expect(recargado.get('0000001-11.2024.4.05.8300')?.orgaoJulgador).toBe('1ª Vara Federal');
   });
+
+  // ------------------------------------------------------ segredo de justiça
+
+  it('dos procesos en sigilo distintos NO se funden en uno solo', () => {
+    // El fallo que esta prueba impide: indexar por `numeroProcesso` cuando ese
+    // campo no existe. Los dos registros compartirían clave (undefined, o peor,
+    // una cadena vacía), el segundo se tomaría por duplicado del primero y el
+    // scraper informaría de una deduplicación que en realidad es pérdida.
+    const mapa = new Map<string, ProcesoJudicial>();
+
+    const insertados = persistencia.anadirProcesos(mapa, [
+      procesoEnSigilo('23300a04caaa9cb7577fde2acd412921f12508038c5c97a5'),
+      procesoEnSigilo('596acaa9b1d471e7577fde2acd412921f12508038c5c97a5'),
+    ]);
+
+    expect(insertados).toBe(2);
+    expect(mapa.size).toBe(2);
+    expect([...mapa.keys()]).toEqual([
+      'sigilo:23300a04caaa9cb7577fde2acd412921f12508038c5c97a5',
+      'sigilo:596acaa9b1d471e7577fde2acd412921f12508038c5c97a5',
+    ]);
+    // Y ninguno de los dos ha ganado un número de proceso por el camino.
+    for (const guardado of mapa.values()) {
+      expect(guardado.numeroProcesso).toBeUndefined();
+      expect(guardado.enSigilo).toBe(true);
+    }
+  });
+
+  it('el mismo proceso en sigilo repetido entre páginas sí se deduplica', () => {
+    const mapa = new Map<string, ProcesoJudicial>();
+    persistencia.anadirProcesos(mapa, [procesoEnSigilo('23300a04caaa9cb7577fde2acd412921f12508038c5c97a5')]);
+
+    const nuevos = persistencia.anadirProcesos(mapa, [
+      procesoEnSigilo('23300a04caaa9cb7577fde2acd412921f12508038c5c97a5'),
+    ]);
+
+    expect(nuevos).toBe(0);
+    expect(mapa.size).toBe(1);
+  });
+
+  it('el ciclo guardar/cargar conserva un proceso en sigilo sin inventarle número', () => {
+    const mapa = new Map<string, ProcesoJudicial>();
+    persistencia.anadirProcesos(mapa, [procesoEnSigilo('23300a04caaa9cb7577fde2acd412921f12508038c5c97a5')]);
+
+    persistencia.guardarProcesos(mapa);
+    const recargado = persistencia.cargarProcesos();
+
+    const guardado = recargado.get('sigilo:23300a04caaa9cb7577fde2acd412921f12508038c5c97a5');
+    expect(recargado.size).toBe(1);
+    expect(guardado?.enSigilo).toBe(true);
+    expect(guardado?.numeroProcesso).toBeUndefined();
+    expect(guardado?.classeJudicial).toBe('PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL');
+  });
 });
 
 // -------------------------------------------------------- lectura defensiva
@@ -143,13 +209,13 @@ describe('ficheros corruptos', () => {
     expect(persistencia.cargarProcesos().size).toBe(0);
   });
 
-  it('descarta la entrada sin número de proceso y conserva las buenas', () => {
+  it('descarta la entrada sin ninguna clave utilizable y conserva las buenas', () => {
     fs.writeFileSync(
       CONFIG.recordsPath,
       JSON.stringify({
-        buena: { numeroProcesso: '0000001-11.2024.4.05.8300' },
-        mala: { classeJudicial: 'sin número' },
-        peor: { numeroProcesso: '0000002-22.2024.4.05.8300', partes: 'no es un array' },
+        buena: { claveUnica: '0000001-11.2024.4.05.8300', numeroProcesso: '0000001-11.2024.4.05.8300' },
+        mala: { classeJudicial: 'ni clave ni número' },
+        peor: { claveUnica: '0000002-22.2024.4.05.8300', partes: 'no es un array' },
       }),
       'utf8',
     );
@@ -157,6 +223,48 @@ describe('ficheros corruptos', () => {
     const mapa = persistencia.cargarProcesos();
 
     expect([...mapa.keys()]).toEqual(['0000001-11.2024.4.05.8300']);
+  });
+
+  it('un records.json del formato anterior (solo numeroProcesso) se migra al cargarlo', () => {
+    // Sin esta migración, actualizar el scraper descartaría en silencio todo lo
+    // ya extraído —incluido el `estado: completado`— y la pasada siguiente
+    // volvería a bajar los mismos PDF.
+    fs.writeFileSync(
+      CONFIG.recordsPath,
+      JSON.stringify({
+        '0000001-11.2024.4.05.8300': {
+          numeroProcesso: '0000001-11.2024.4.05.8300',
+          estado: 'completado',
+          archivos: ['a.pdf'],
+        },
+      }),
+      'utf8',
+    );
+
+    const mapa = persistencia.cargarProcesos();
+    const guardado = mapa.get('0000001-11.2024.4.05.8300');
+
+    expect(mapa.size).toBe(1);
+    // La clave derivada es el número, que es exactamente lo que emite el parser
+    // para un proceso que sí lo publica: el fichero migrado y uno nuevo coinciden.
+    expect(guardado?.claveUnica).toBe('0000001-11.2024.4.05.8300');
+    expect(guardado?.numeroProcesso).toBe('0000001-11.2024.4.05.8300');
+    expect(guardado?.estado).toBe('completado');
+    expect(guardado?.archivos).toEqual(['a.pdf']);
+  });
+
+  it('un failed.json del formato anterior conserva sus intentos ya contados', () => {
+    fs.writeFileSync(
+      CONFIG.failedPath,
+      '[{"numeroProcesso":"0000001-11.2024.4.05.8300","fase":"documento","motivo":"429","intentos":3}]',
+      'utf8',
+    );
+
+    const fallos = persistencia.cargarFallos();
+
+    expect(fallos).toHaveLength(1);
+    expect(fallos[0].claveUnica).toBe('0000001-11.2024.4.05.8300');
+    expect(fallos[0].intentos).toBe(3);
   });
 
   it('un fichero ausente es la primera ejecución, no un error', () => {
@@ -186,7 +294,7 @@ describe('escritura atómica', () => {
       extraccionCompletada: false,
       actualizadoEn: '',
     });
-    persistencia.registrarFallo({ numeroProcesso: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' });
+    persistencia.registrarFallo({ claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' });
     persistencia.exportarCsv(mapa);
 
     // Un `.tmp` superviviente confunde al siguiente arranque y, si el fallo fue
@@ -219,7 +327,7 @@ describe('escritura atómica', () => {
 
 describe('registrarFallo', () => {
   it('acumula intentos en la entrada existente en vez de duplicarla', () => {
-    const fallo = { numeroProcesso: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429 persistente' };
+    const fallo = { claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429 persistente' };
 
     persistencia.registrarFallo(fallo);
     persistencia.registrarFallo({ ...fallo, motivo: '429 otra vez' });
@@ -236,8 +344,8 @@ describe('registrarFallo', () => {
   });
 
   it('separa los fallos del mismo proceso en fases distintas: son dos problemas', () => {
-    persistencia.registrarFallo({ numeroProcesso: '0000001-11.2024.4.05.8300', fase: 'ficha', motivo: 'timeout' });
-    persistencia.registrarFallo({ numeroProcesso: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' });
+    persistencia.registrarFallo({ claveUnica: '0000001-11.2024.4.05.8300', fase: 'ficha', motivo: 'timeout' });
+    persistencia.registrarFallo({ claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' });
 
     const fallos = persistencia.cargarFallos();
 
@@ -250,7 +358,7 @@ describe('registrarFallo', () => {
     // reintentar" dejaría de existir en silencio.
     fs.writeFileSync(CONFIG.failedPath, '[{"numeroProcesso":"0000001-11.2024.4.05.8300","fase":"documento","motivo":"x"}]', 'utf8');
 
-    persistencia.registrarFallo({ numeroProcesso: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: 'y' });
+    persistencia.registrarFallo({ claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: 'y' });
 
     expect(persistencia.cargarFallos()[0].intentos).toBe(2);
   });
@@ -285,7 +393,8 @@ describe('exportarCsv', () => {
     const filas = contenido.slice(1).split('\r\n');
 
     expect(filas[0]).toBe(
-      '"numeroProcesso","orgaoJulgador","classeJudicial","dataAutuacao","partes","documentos","archivos","estado","paginaOrigen","vistoEn"',
+      '"claveUnica","numeroProcesso","enSigilo","orgaoJulgador","classeJudicial","dataAutuacao","partes",' +
+        '"documentos","archivos","estado","paginaOrigen","vistoEn"',
     );
     expect(filas[1]).toContain('"1ª Vara ""Federal"""');
     expect(filas[1]).toContain('"AUTOR: FULANO, DE TAL"');
@@ -297,6 +406,7 @@ describe('exportarCsv', () => {
     const mapa = new Map<string, ProcesoJudicial>();
     // Simula un records.json escrito por otra versión o editado a mano.
     mapa.set('0000001-11.2024.4.05.8300', {
+      claveUnica: '0000001-11.2024.4.05.8300',
       numeroProcesso: '0000001-11.2024.4.05.8300',
       documentos: [
         { titulo: 'Petição inicial' },
@@ -309,6 +419,27 @@ describe('exportarCsv', () => {
     const contenido = fs.readFileSync(persistencia.exportarCsv(mapa), 'utf8');
 
     expect(contenido).toContain('"2"');
+  });
+
+  it('un proceso en sigilo sale con su clave, la columna de número VACÍA y enSigilo', () => {
+    const mapa = new Map<string, ProcesoJudicial>();
+    persistencia.anadirProcesos(mapa, [
+      proceso('0000001-11.2024.4.05.8300'),
+      procesoEnSigilo('23300a04caaa9cb7577fde2acd412921f12508038c5c97a5'),
+    ]);
+
+    const contenido = fs.readFileSync(persistencia.exportarCsv(mapa), 'utf8');
+    const filas = contenido.slice(1).split('\r\n');
+
+    // Fila del proceso normal: las dos primeras columnas coinciden.
+    expect(filas[1]?.startsWith('"0000001-11.2024.4.05.8300","0000001-11.2024.4.05.8300","false"')).toBe(true);
+    // Fila del proceso en sigilo: clave sí, número NO. La celda vacía es el dato
+    // correcto —«el tribunal no lo publica»— y `enSigilo` dice por qué.
+    expect(
+      filas[2]?.startsWith('"sigilo:23300a04caaa9cb7577fde2acd412921f12508038c5c97a5","","true"'),
+    ).toBe(true);
+    // Y en ninguna parte del fichero aparece un `undefined` disfrazado de dato.
+    expect(contenido).not.toContain('undefined');
   });
 
   it('acepta una ruta de destino explícita', () => {

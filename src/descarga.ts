@@ -96,7 +96,10 @@ export class ServicioDescarga {
     // Solo la petición entra en el bucle de reintentos: el 429 y los cortes de red
     // se resuelven repitiendo, pero un PDF que no lo es seguirá sin serlo.
     const respuesta = await withRetry(() => this.pedir(descarga), {
-      etiqueta: `descarga ${proceso.numeroProcesso} · ${documento.titulo}`,
+      // El número si el tribunal lo publica, y la clave del scraper si el
+      // proceso está en sigilo: un `undefined` en la etiqueta de un reintento
+      // deja el log sin decir de qué expediente se está hablando.
+      etiqueta: `descarga ${proceso.numeroProcesso ?? proceso.claveUnica} · ${documento.titulo}`,
     });
 
     // La escritura entra en el try junto con la validación: un fallo a mitad de
@@ -173,7 +176,14 @@ export class ServicioDescarga {
     // fila. Sin el id, el segundo documento homónimo encuentra el destino ya
     // creado, se da por descargado y se pierde en silencio. Se pone antes del
     // título para que sobreviva al truncado por longitud.
-    const base = ServicioDescarga.nombreSeguro(proceso.numeroProcesso, documento.id ?? '', documento.titulo);
+    //
+    // El prefijo es el número CNJ cuando el tribunal lo publica y la `claveUnica`
+    // cuando no (segredo de justiça): un fichero llamado `undefined_1234_….pdf`
+    // sería ilegible y, peor, todos los procesos en sigilo compartirían prefijo.
+    // `nombreSeguro` convierte los dos puntos de `sigilo:` en `_`, que Windows sí
+    // admite en un nombre de fichero.
+    const prefijo = proceso.numeroProcesso ?? proceso.claveUnica;
+    const base = ServicioDescarga.nombreSeguro(prefijo, documento.id ?? '', documento.titulo);
     return path.join(CONFIG.pdfDir, `${base}.pdf`);
   }
 

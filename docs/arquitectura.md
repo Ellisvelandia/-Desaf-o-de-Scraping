@@ -143,7 +143,7 @@ Una extracción contra este portal dura horas y se interrumpe: Ctrl+C, un `429` 
 
 **Cómo se reanuda.** Una sesión nueva siempre empieza en la página 1 —el estado vive en el servidor y no hay forma de saltar—, así que la Fase 1 avanza el paginador en vacío hasta `ultimaPaginaCompletada` y solo entonces empieza a acumular. Es una petición por página saltada, y es el precio de un portal sin URLs navegables.
 
-**Idempotencia.** La deduplicación es por `numeroProcesso`, la clave que asigna el poder judicial: estable entre páginas y entre ejecuciones, a diferencia de cualquier id propio. `records.json` se escribe como **objeto indexado por esa clave, no como array**, de modo que un duplicado es imposible por construcción y no depende de que nadie haga `push` dos veces. El campo `vistoEn` marca el primer avistamiento y nunca se refresca; si se refrescara, dejaría de significar «primera vez».
+**Idempotencia.** La deduplicación es por `claveUnica`: el `numeroProcesso` cuando el portal lo publica —la clave que asigna el poder judicial, estable entre páginas y entre ejecuciones, a diferencia de cualquier id propio— y un identificador derivado del `ca=` del enlace a la ficha, con prefijo `sigilo:`, para los procesos en *segredo de justiça*, que no publican número. Son dos campos y no uno a propósito: `numeroProcesso` es un dato del portal y `claveUnica` un índice del scraper, y confundirlos es lo que lleva a rellenar el primero con un número inventado. `records.json` se escribe como **objeto indexado por `claveUnica`, no como array**, de modo que un duplicado es imposible por construcción y no depende de que nadie haga `push` dos veces. Un `records.json` del formato anterior (indexado por número, sin `claveUnica`) se migra al cargarlo, derivando la clave del número. El campo `vistoEn` marca el primer avistamiento y nunca se refresca; si se refrescara, dejaría de significar «primera vez».
 
 **Cuándo se declara terminada la extracción.** Con tres señales, y ninguna de ellas por sí sola basta siempre:
 
@@ -201,7 +201,7 @@ El tamaño se mide **en disco y no sobre el buffer**: así el mismo control cubr
 
 ### Un documento que falla es un documento perdido, no una ejecución perdida
 
-Los errores se propagan al llamante, que los anota en `failed.json` con `(numeroProcesso, fase)` y continúa con el siguiente documento. Es literalmente lo que pide el enunciado, y es también la única política sensata contra un portal que falla de forma intermitente.
+Los errores se propagan al llamante, que los anota en `failed.json` con `(claveUnica, fase)` y continúa con el siguiente documento. Es literalmente lo que pide el enunciado, y es también la única política sensata contra un portal que falla de forma intermitente.
 
 ### Nombres de fichero
 

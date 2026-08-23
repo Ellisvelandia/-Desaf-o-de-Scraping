@@ -716,13 +716,19 @@ function construirProceso(
 
   // Se mantiene como cadena: el número CNJ tiene ceros a la izquierda que
   // cualquier conversión numérica destruiría.
-  const proceso: ProcesoJudicial = { numeroProcesso: m[0] };
+  //
+  // `claveUnica` repite el número porque esta variante ancla cada fila al
+  // formato CNJ: aquí, por construcción, no hay filas sin número que necesiten
+  // una clave derivada. Rellenarla igualmente es lo que mantiene el contrato de
+  // `types.ts` válido para las dos variantes.
+  const numero = m[0];
+  const proceso: ProcesoJudicial = { claveUnica: numero, numeroProcesso: numero };
 
   // Cómo abrir la ficha de este proceso. Se lee AQUÍ y no en la Fase 2 porque el
   // control vive en la fila, y la fila solo existe mientras esta página está en
   // el documento vigente. Si la fila no lo publica de forma inequívoca, el campo
   // se omite (contrato de types.ts) y la Fase 2 lo registra como fallo.
-  const apertura = aperturaDeFila($, fila, proceso.numeroProcesso);
+  const apertura = aperturaDeFila($, fila, numero);
   if (apertura) proceso.apertura = apertura;
 
   const clase = celdaDe(plan.clase);
@@ -822,9 +828,10 @@ export function parsearProcesos($: cheerio.CheerioAPI, pagina: number): ProcesoJ
   for (const fila of elegida.filas) {
     const proceso = construirProceso($, fila, plan, pagina);
     if (!proceso) continue;
-    // RichFaces duplica filas al fijar cabeceras; el número es la clave del tribunal.
-    if (vistos.has(proceso.numeroProcesso)) continue;
-    vistos.add(proceso.numeroProcesso);
+    // RichFaces duplica filas al fijar cabeceras. En esta variante `claveUnica`
+    // es el propio número CNJ, que es la clave que asigna el tribunal.
+    if (vistos.has(proceso.claveUnica)) continue;
+    vistos.add(proceso.claveUnica);
     procesos.push(proceso);
   }
   return procesos;

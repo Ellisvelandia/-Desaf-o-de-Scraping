@@ -18,10 +18,17 @@
  *     literal convertiría el parser en específico de un tribunal, así que aquí
  *     todo se localiza por sufijo de id y por posición dentro de la fila.
  *
- *  2. Hay filas SIN número de proceso (las de sigilo: el `<b>` dice solo
- *     "PJEC - Assunto"). Se descartan en silencio verificable —con una línea de
- *     debug— porque `numeroProcesso` es la clave de deduplicación de todo el
- *     scraper y no hay nada que inventar en su lugar.
+ *  2. Hay filas SIN número de proceso: las de los expedientes en segredo de
+ *     justiça, cuyo `<b>` dice solo "PJEC - Assunto". En el fixture del TRF1 son
+ *     8 de 30, un 27 % de la página. NO se descartan: el portal sí publica de
+ *     ellas la clase judicial, la sigla, el asunto y las dos partes, y el
+ *     enunciado pide extraer toda la información disponible de cada proceso. Se
+ *     emiten con `enSigilo: true`, sin `numeroProcesso` —ese dato lo asigna el
+ *     tribunal y no se sustituye por nada— y con una `claveUnica` derivada del
+ *     `ca=` del enlace a su ficha, que es el identificador con el que el propio
+ *     portal abre ese expediente. Solo se descarta la fila que no tiene NI
+ *     número NI enlace: ahí no queda ninguna clave posible, y eso se dice por
+ *     `warn`, no por `debug`.
  */
 
 import * as cheerio from 'cheerio';
@@ -59,6 +66,33 @@ const RE_NUMERO_CNJ = /\b\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}\b/;
  * único separador y tratar los siguientes como más polos partiría un nombre.
  */
 const RE_SEPARADOR_POLOS = /\s+X\s+/;
+
+/**
+ * Guion que separa la sigla del asunto en el rótulo de una fila SIN número
+ * ("PJEC  -  Acidente de Trabalho").
+ *
+ * Solo se usa la PRIMERA aparición: las siglas del PJe son un único token
+ * (PJEC, ProceComCiv, PUILCiv), así que cualquier guion posterior pertenece ya
+ * al asunto. El espacio final es opcional porque el portal llega a publicar
+ * "PJEC -" con el asunto vacío, y ahí el guion sigue siendo el separador.
+ */
+const RE_SEPARADOR_SIGLA = /\s+-\s*/;
+
+/**
+ * El parámetro `ca=` del enlace a la ficha.
+ *
+ * Es el identificador con el que el propio portal abre ese expediente, así que
+ * es lo más parecido a una clave estable que publica una fila sin número.
+ */
+const RE_PARAMETRO_CA = /[?&]ca=([^&#\s]+)/;
+
+/**
+ * Prefijo de la clave sintética de un proceso en sigilo.
+ *
+ * Va delante para que nadie confunda de un vistazo —en `records.json`, en el
+ * CSV o en el nombre de un PDF— una clave del scraper con un número CNJ real.
+ */
+const PREFIJO_SIGILO = 'sigilo:';
 
 /**
  * Fecha brasileña con hora opcional: dd/MM/yyyy [HH:mm[:ss]].
@@ -218,6 +252,15 @@ function leerCeldaProceso($: cheerio.CheerioAPI, celda: Elemento): CeldaProceso 
 
   const resultado: CeldaProceso = {};
 
+  if (ancla === undefined) {
+    // Sin enlace no hay eje, y solo se rescata el número si está suelto en la
+    // celda. Repartir el resto entre clase, sigla y asunto sin ese eje sería
+    // adivinar dónde acaba cada campo.
+    const suelto = RE_NUMERO_CNJ.exec(normalizar($celda.text()));
+    if (suelto) resultado.numero = suelto[0];
+    return resultado;
+  }
+
   // "SIGLA 0000619-36.2021.4.05.8109 -  Assunto" → las tres piezas.
   const m = RE_NUMERO_CNJ.exec(textoAncla);
   if (m?.index !== undefined) {
@@ -228,12 +271,25 @@ function leerCeldaProceso($: cheerio.CheerioAPI, celda: Elemento): CeldaProceso 
     const assunto = normalizar(textoAncla.slice(m.index + m[0].length).replace(/^\s*-\s*/, ''));
     if (assunto.length > 0) resultado.assunto = assunto;
   } else {
-    // Sin enlace utilizable solo se rescata el número, si es que está suelto en
-    // la celda. Repartir el resto entre clase, sigla y asunto sin el eje del
-    // enlace sería adivinar dónde acaba cada campo.
+    // Fila en segredo de justiça: el MISMO rótulo pero sin número en medio
+    // ("ProceComCiv - Vícios de Construção"). El enlace sigue siendo el eje, así
+    // que la clase judicial y los polos se leen igual que en cualquier otra fila
+    // (más abajo) y aquí solo hay que partir el rótulo en sus dos piezas.
+    //
+    // Un número suelto FUERA del enlace es un caso que ningún fixture produce,
+    // pero se busca antes de dar la fila por sigilosa: marcar como "sin número"
+    // una fila que sí lo publica en otra posición sería el mismo error de
+    // pérdida silenciosa, solo que al revés.
     const suelto = RE_NUMERO_CNJ.exec(normalizar($celda.text()));
     if (suelto) resultado.numero = suelto[0];
-    return resultado;
+
+    const corte = RE_SEPARADOR_SIGLA.exec(textoAncla);
+    // Sin guion se conserva todo como sigla —es la posición que ocupa siempre el
+    // primer trozo del rótulo— en lugar de tirar el texto.
+    const sigla = normalizar(corte?.index === undefined ? textoAncla : textoAncla.slice(0, corte.index));
+    const assunto = corte?.index === undefined ? '' : normalizar(textoAncla.slice(corte.index + corte[0].length));
+    if (sigla.length > 0) resultado.sigla = sigla;
+    if (assunto.length > 0) resultado.assunto = assunto;
   }
 
   if (antes.length > 0) resultado.classeJudicial = antes;
@@ -291,16 +347,50 @@ function leerMovimiento($: cheerio.CheerioAPI, celda: Elemento): Movimiento {
 
 // ---------------------------------------------------------------- procesos
 
-/** Construye el registro de una fila, o undefined si la fila no trae número. */
+/**
+ * Clave de deduplicación de una fila, o undefined si la fila no ofrece ninguna.
+ *
+ * Con número CNJ la clave ES el número: la asigna el poder judicial, es estable
+ * entre páginas y entre ejecuciones y no hay nada mejor. Sin número —segredo de
+ * justiça— se cae al `ca=` del enlace a la ficha, con el prefijo `sigilo:`
+ * delante. Lo que NUNCA se hace es escribir ese valor en `numeroProcesso`: la
+ * clave es un índice de este scraper y el número es un dato del tribunal.
+ */
+function claveDe(numero: string | undefined, apertura: DescargaDirecta | undefined): string | undefined {
+  if (numero !== undefined) return numero;
+  if (apertura === undefined) return undefined;
+  const ca = RE_PARAMETRO_CA.exec(apertura.url)?.[1];
+  return ca === undefined ? undefined : `${PREFIJO_SIGILO}${ca}`;
+}
+
+/**
+ * Construye el registro de una fila.
+ *
+ * Devuelve `undefined` SOLO cuando la fila no publica ni número CNJ ni enlace a
+ * su ficha: sin ninguna de las dos cosas no hay clave posible, y un registro sin
+ * clave no se puede deduplicar ni volver a encontrar. Una fila sin número pero
+ * con enlace sí se emite, marcada `enSigilo`.
+ */
 function construirProceso($: cheerio.CheerioAPI, fila: Elemento, pagina: number): ProcesoJudicial | undefined {
   const celdas = $(fila).children('td, th').toArray();
   const celdaProceso = celdas[1];
   const datos = celdaProceso === undefined ? {} : leerCeldaProceso($, celdaProceso);
-  if (datos.numero === undefined) return undefined;
 
-  // Se mantiene como cadena: el número CNJ tiene ceros a la izquierda que
-  // cualquier conversión numérica destruiría.
-  const proceso: ProcesoJudicial = { numeroProcesso: datos.numero };
+  // El control de apertura se lee AQUÍ porque solo existe mientras esta página
+  // es el documento vigente; la Fase 2 ya no tendría de dónde sacarlo. Y es,
+  // además, la única fuente de clave que le queda a una fila en sigilo.
+  const apertura = aperturaDeFila($, fila);
+
+  const clave = claveDe(datos.numero, apertura);
+  if (clave === undefined) return undefined;
+
+  const proceso: ProcesoJudicial = { claveUnica: clave };
+
+  // El número se mantiene como cadena: tiene ceros a la izquierda que cualquier
+  // conversión numérica destruiría. Si el portal no lo publicó, el campo se
+  // omite y la fila queda marcada; no se rellena con la clave.
+  if (datos.numero !== undefined) proceso.numeroProcesso = datos.numero;
+  else proceso.enSigilo = true;
 
   if (datos.classeJudicial !== undefined) proceso.classeJudicial = datos.classeJudicial;
 
@@ -309,9 +399,6 @@ function construirProceso($: cheerio.CheerioAPI, fila: Elemento, pagina: number)
   if (datos.poloPasivo !== undefined) partes.push({ papel: 'PASSIVO', nombre: datos.poloPasivo });
   if (partes.length > 0) proceso.partes = partes;
 
-  // El control de apertura se lee AQUÍ porque solo existe mientras esta página
-  // es el documento vigente; la Fase 2 ya no tendría de dónde sacarlo.
-  const apertura = aperturaDeFila($, fila);
   if (apertura) proceso.apertura = apertura;
 
   const camposExtra: Record<string, string> = {};
@@ -338,9 +425,13 @@ function construirProceso($: cheerio.CheerioAPI, fila: Elemento, pagina: number)
  *
  * Devuelve `[]` cuando el documento no tiene esa tabla (la página de inicio, o
  * la plantilla antigua). Lanza `EstructuraInesperadaError` cuando la tabla está
- * ahí con filas pero ninguna contiene un número CNJ: eso ya no es "cero
- * resultados", es que la celda compuesta cambió de forma y seguir devolviendo
- * `[]` haría creer al scraper que terminó bien con las manos vacías.
+ * ahí con filas pero ninguna publica número CNJ NI enlace a su ficha: eso ya no
+ * es "cero resultados", es que la celda compuesta cambió de forma y seguir
+ * devolviendo `[]` haría creer al scraper que terminó bien con las manos vacías.
+ *
+ * El umbral es "ni lo uno ni lo otro" y no "ningún número" a propósito: una
+ * página entera de procesos en segredo de justiça es perfectamente legítima, y
+ * con el criterio anterior habría abortado la extracción tomándola por rota.
  */
 export function parsearProcesosModerno($: cheerio.CheerioAPI, pagina: number): ProcesoJudicial[] {
   const tabla: Elemento | undefined = $(SELECTOR_TABLA).toArray()[0];
@@ -352,17 +443,20 @@ export function parsearProcesosModerno($: cheerio.CheerioAPI, pagina: number): P
 
   const procesos: ProcesoJudicial[] = [];
   const vistos = new Set<string>();
-  let sinNumero = 0;
+  let sinClave = 0;
+  let enSigilo = 0;
 
   for (const fila of filas) {
     const proceso = construirProceso($, fila, pagina);
     if (!proceso) {
-      sinNumero++;
+      sinClave++;
       continue;
     }
-    // RichFaces repite filas al fijar cabeceras; el número es la clave del tribunal.
-    if (vistos.has(proceso.numeroProcesso)) continue;
-    vistos.add(proceso.numeroProcesso);
+    // RichFaces repite filas al fijar cabeceras. Se deduplica por `claveUnica`,
+    // que existe tanto si el portal publicó el número como si no.
+    if (vistos.has(proceso.claveUnica)) continue;
+    vistos.add(proceso.claveUnica);
+    if (proceso.enSigilo === true) enSigilo++;
     procesos.push(proceso);
   }
 
@@ -377,16 +471,31 @@ export function parsearProcesosModerno($: cheerio.CheerioAPI, pagina: number): P
             .map((c) => JSON.stringify(normalizar($(c).text()).slice(0, 120)))
             .join(' | ');
     throw new EstructuraInesperadaError(
-      `La tabla ${String($(tabla).attr('id'))} tiene ${filas.length} filas pero ninguna contiene un número de ` +
-        'proceso con formato CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO): cambió la celda compuesta "Processo" o la tabla ' +
-        `ya no es la de resultados. Primera fila: ${muestra}`,
+      `La tabla ${String($(tabla).attr('id'))} tiene ${filas.length} filas pero ninguna publica un número de ` +
+        'proceso con formato CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO) NI un enlace a su ficha con el parámetro `ca=`: ' +
+        'cambió la celda compuesta "Processo" o la tabla ya no es la de resultados. Una tabla entera de procesos ' +
+        'en segredo de justiça NO llega hasta aquí, porque esos se identifican por su enlace. ' +
+        `Primera fila: ${muestra}`,
     );
   }
 
-  if (sinNumero > 0) {
-    // Normal y esperado: los procesos en sigilo se listan sin número. Se deja
-    // constancia para que una caída del recuento no se confunda con un fallo.
-    log.debug(`Página ${pagina}: ${sinNumero} de ${filas.length} filas sin número de proceso (sigilo); omitidas`);
+  if (enSigilo > 0) {
+    // Normal y esperado: los expedientes en segredo de justiça se listan sin
+    // número. Ya NO se pierden —salen con `enSigilo` y clave derivada del
+    // enlace—, pero se deja constancia para que el recuento sea explicable.
+    log.debug(
+      `Página ${pagina}: ${enSigilo} de ${filas.length} filas sin número de proceso (segredo de justiça); ` +
+        'emitidas con clave derivada del enlace a su ficha',
+    );
+  }
+
+  if (sinClave > 0) {
+    // Esto sí es pérdida de datos, así que se dice en voz alta: una fila sin
+    // número y sin enlace no ofrece ninguna clave con la que guardarla.
+    log.warn(
+      `Página ${pagina}: ${sinClave} de ${filas.length} filas descartadas por no publicar ni número de proceso ` +
+        'ni enlace a su ficha (`ca=`): no hay ninguna clave con la que indexarlas',
+    );
   }
 
   return procesos;

@@ -198,11 +198,15 @@ Depende de la variante (ver «Dos variantes de la Consulta Pública»):
 
 Dato medido sobre el fixture del TRF1 y que conviene no confundir con un fallo:
 de sus **30 filas solo 22 publican número CNJ**. En las otras 8 el `<b>` dice
-solo «PJEC - Assunto» y la columna de movimentación llega vacía. Como
-`numeroProcesso` es la clave de deduplicación de todo el scraper, esas filas se
-omiten (con una línea de `log.debug`) en lugar de emitir un registro con una
-clave inventada. En el fixture del TRF5 las 30 filas traen número y salen 30
-procesos.
+solo «PJEC - Assunto» y la columna de movimentación llega vacía: son procesos en
+*segredo de justiça*. Esas filas **NO se descartan** —hacerlo tiraba el 27 % de
+la página—: se emiten con `enSigilo: true`, sin `numeroProcesso` (el número es un
+dato del tribunal y no se sustituye por nada) y con una `claveUnica` derivada del
+`ca=` de su ficha, con el prefijo `sigilo:`. De ellas se extrae además todo lo que
+el portal sí publica: clase judicial, sigla, asunto y las dos partes. Solo se
+descarta —y con `log.warn`— la fila que no tiene ni número ni enlace, porque
+entonces no hay ninguna clave con la que indexarla. En el fixture del TRF5 las 30
+filas traen número y salen 30 procesos, ninguno en sigilo.
 
 ## Señales de fallo
 | Señal | Significado real | Reacción |

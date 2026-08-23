@@ -205,7 +205,7 @@ src/
 ├── ficha.ts              parsearFicha: partes, documentos y «Dados do Processo» del expediente
 ├── errores.ts            EstructuraInesperadaError, compartido por los dos parsers
 ├── paginacion.ts         detectarPaginacion, construirOpcionesPagina, hayPaginaSiguiente
-├── persistencia.ts       Persistencia: JSON atómico, dedupe por número CNJ, estado, fallos, CSV
+├── persistencia.ts       Persistencia: JSON atómico, dedupe por claveUnica, estado, fallos, CSV
 ├── descarga.ts           ServicioDescarga, DescargaInvalidaError, nombres de fichero seguros
 ├── http/
 │   └── client.ts         ClienteHttp: cookies, ISO-8859-1, pausa mínima, errores disfrazados de 200
@@ -242,11 +242,11 @@ Todo se escribe bajo `output/`, que está en `.gitignore` porque contiene datos 
 
 | Ruta | Contenido |
 |---|---|
-| `output/records.json` | Los procesos, como objeto **indexado por número CNJ** (no array). La clave la asigna el poder judicial, así que la deduplicación es O(1) y los duplicados son imposibles por construcción. |
+| `output/records.json` | Los procesos, como objeto **indexado por `claveUnica`** (no array). La deduplicación es O(1) y los duplicados son imposibles por construcción. |
 | `output/records.csv` | Las columnas estables del contrato, con BOM UTF-8 y CRLF para que Excel en Windows no destroce los acentos. Los documentos van como recuento; el detalle está en el JSON. |
 | `output/state.json` | Estado de reanudación: criterio de búsqueda, última página completada, si la extracción terminó y el total anunciado por el portal. |
-| `output/failed.json` | Los fallos, con clave (número de proceso, fase), motivo, número de intentos y marca del último. |
-| `output/pdfs/` | Los PDF descargados, nombrados `<numeroCNJ>_<idDocumento>_<titulo>.pdf`. |
+| `output/failed.json` | Los fallos, con clave (`claveUnica`, fase), motivo, número de intentos y marca del último. |
+| `output/pdfs/` | Los PDF descargados, nombrados `<numeroCNJ>_<idDocumento>_<titulo>.pdf`, o `sigilo_<hash>_<idDocumento>_<titulo>.pdf` cuando el proceso corre en segredo de justiça y no tiene número. |
 | `output/captcha.png` | La última imagen de CAPTCHA servida. Es de trabajo, no de resultado. |
 | `output/raw/` | Respuestas crudas del portal, solo cuando `GUARDAR_RAW` está activo. |
 
@@ -257,6 +257,7 @@ Todo se escribe bajo `output/`, que está en `.gitignore` porque contiene datos 
 ```json
 {
   "0801234-56.2023.4.05.8300": {
+    "claveUnica": "0801234-56.2023.4.05.8300",
     "numeroProcesso": "0801234-56.2023.4.05.8300",
     "orgaoJulgador": "12ª Vara Federal da Seção Judiciária de Pernambuco",
     "classeJudicial": "PROCEDIMENTO COMUM CÍVEL",
@@ -283,7 +284,46 @@ Todo se escribe bajo `output/`, que está en `.gitignore` porque contiene datos 
 }
 ```
 
-Campos con dos orígenes distintos: `numeroProcesso`, `orgaoJulgador`, `classeJudicial`, `dataAutuacao`, `partes`, `documentos`, `apertura` y `camposExtra` vienen del portal; `paginaOrigen`, `estado`, `archivos` y `vistoEn` los añade el scraper. Ningún campo se emite vacío por defecto: si el portal no publica un dato, el campo se omite en lugar de prometer una columna siempre en blanco.
+Campos con dos orígenes distintos: `numeroProcesso`, `orgaoJulgador`, `classeJudicial`, `dataAutuacao`, `partes`, `documentos`, `apertura` y `camposExtra` vienen del portal; `claveUnica`, `enSigilo`, `paginaOrigen`, `estado`, `archivos` y `vistoEn` los añade el scraper. Ningún campo se emite vacío por defecto: si el portal no publica un dato, el campo se omite en lugar de prometer una columna siempre en blanco.
+
+#### `claveUnica` y `numeroProcesso` no son el mismo campo
+
+`numeroProcesso` es un **dato del portal**: el número CNJ que asigna el poder judicial. `claveUnica` es un **índice del scraper**, y existe solo para no guardar dos veces la misma fila. En la mayoría de procesos coinciden, y precisamente por eso conviene decir por qué son dos campos: **hay procesos que el portal publica sin número** —los que corren en *segredo de justiça*—, y con el número como única clave esas filas solo tenían dos destinos, perderse o forzar a inventarles uno. Ambos son inaceptables: el primero tira información pública, el segundo publica un número CNJ que no existe en ningún tribunal.
+
+Así que la regla es explícita:
+
+- Si el portal publica el número → `claveUnica` **es** ese número.
+- Si no lo publica → `numeroProcesso` **se omite**, `enSigilo` vale `true` y `claveUnica` se deriva del parámetro `ca=` del enlace a la ficha (el identificador con el que el propio portal abre ese expediente), con el prefijo `sigilo:` delante para que nunca se confunda con un número real.
+
+Un registro en segredo de justiça, con todo lo demás que el portal **sí** publica de él:
+
+```json
+{
+  "sigilo:23300a04caaa9cb7577fde2acd412921f12508038c5c97a5": {
+    "claveUnica": "sigilo:23300a04caaa9cb7577fde2acd412921f12508038c5c97a5",
+    "enSigilo": true,
+    "classeJudicial": "PROCEDIMENTO COMUM CÍVEL",
+    "partes": [
+      { "papel": "ATIVO", "nombre": "CONDOMINIO EDIFICIO OURO PRETO" },
+      { "papel": "PASSIVO", "nombre": "M.R.CONSTRUCOES E EMPREENDIMENTOS IMOBILIARIOS LTDA - EPP e outros (1)" }
+    ],
+    "camposExtra": { "sigla": "ProceComCiv", "assunto": "Vícios de Construção" },
+    "apertura": {
+      "tipo": "url",
+      "url": "/consultapublica/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=23300a04caaa9cb7577fde2acd412921f12508038c5c97a5"
+    },
+    "paginaOrigen": 1,
+    "estado": "pendiente",
+    "vistoEn": "2026-08-23T14:12:07.441Z"
+  }
+}
+```
+
+Este registro **no es ilustrativo**: sale de ejecutar el parser contra `src/__tests__/fixtures/pje-nuevo-resultados-trf1.html`, y es la fila 3 de esa captura real.
+
+En el CSV eso se traduce en tres columnas al principio —`claveUnica`, `numeroProcesso`, `enSigilo`—, con la celda de `numeroProcesso` **vacía** cuando el tribunal no lo publica. La celda en blanco es el dato correcto: significa «el portal no lo dice», y la columna de al lado explica por qué.
+
+Compatibilidad: un `records.json` escrito por una versión anterior (indexado por número y sin `claveUnica`) **se migra al cargarlo**, derivando la clave del número. Sin eso, actualizar el scraper habría descartado en silencio todo lo ya extraído, incluidos los procesos marcados `completado`, y la pasada siguiente habría vuelto a descargar los mismos PDF. Lo mismo vale para un `failed.json` anterior, que conserva sus intentos ya contados.
 
 ---
 
@@ -320,8 +360,8 @@ El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node
 |---|---|
 | `jsf.test.ts` | El contrato que el servidor exige y no se puede negociar: formulario íntegro, `ViewState` vigente y los cuatro marcadores de A4J. Se comprueba contra la captura real del portal. |
 | `parser.test.ts` | Mapeo por cabecera, fecha brasileña a ISO, columnas desconocidas a `camposExtra`, extracción del enlace a la ficha, y —la más valiosa— que una estructura cambiada rompa **ruidosamente**. |
-| `moderno.test.ts` | La variante moderna contra **HTML real**: detección de plantilla, las 30 filas del TRF5 y las 22 con número de las 30 del TRF1 (misma vista, **otra instancia** — es la prueba de que no hay ids codificados), los totales del pie de tabla, la delegación de `parsearProcesos`, y de la ficha: partes de los dos polos, cabeceras descontaminadas del JavaScript de RichFaces y preferencia del PDF real sobre el visor HTML. |
-| `persistencia.test.ts` | Deduplicación por número CNJ, escritura atómica sin `.tmp` huérfanos, degradación ante ficheros corruptos y formato del CSV. |
+| `moderno.test.ts` | La variante moderna contra **HTML real**: detección de plantilla, las 30 filas del TRF5 y las 30 del TRF1 —22 con número y 8 en segredo de justiça, ninguna descartada— (misma vista, **otra instancia** — es la prueba de que no hay ids codificados), los totales del pie de tabla, la delegación de `parsearProcesos`, y de la ficha: partes de los dos polos, cabeceras descontaminadas del JavaScript de RichFaces y preferencia del PDF real sobre el visor HTML. |
+| `persistencia.test.ts` | Deduplicación por `claveUnica` —incluida la de dos procesos en sigilo distintos, que NO se funden en uno—, migración de un `records.json` del formato anterior, escritura atómica sin `.tmp` huérfanos, degradación ante ficheros corruptos y formato del CSV. |
 | `descarga.test.ts` | Que el nombre de fichero sobreviva a lo que el portal escriba en un título, y que la ruta final solo aparezca si lo descargado es un PDF de verdad. |
 | `retry.test.ts` | El requisito 3 del enunciado: detección del `429`, retroceso exponencial con jitter y tope, `Retry-After`, y qué se propaga cuando ya no se puede seguir. |
 
@@ -341,7 +381,13 @@ Dos decisiones del arnés que conviene conocer:
 - **Variante moderna («fPP»): VERIFICADA contra tres capturas reales de tres instancias distintas** — `pje-nuevo-resultados.html` (TRF5 *treinamento*, contexto `/pjeconsulta`), `pje-nuevo-resultados-trf1.html` (TRF1, contexto `/consultapublica`) y `pje-nuevo-ficha.html` (una ficha completa). Están versionadas en `src/__tests__/fixtures/` y `src/__tests__/moderno.test.ts` corre contra ellas sin red. De ahí sale la estructura real: tres columnas, celda «Processo» compuesta (clase judicial + sigla + número CNJ + asunto + los dos polos), total en `<span class="text-muted">N resultados encontrados</span>` y ficha abierta por GET con `?ca=<hash>`. La captura del TRF1 no es una repetición: es la que demuestra que **no hay ids codificados a mano**, porque los sufijos `j_idNNN` de la misma vista cambian de un tribunal a otro (`j_id257` frente a `j_id259`).
 - **Variante antigua («seam»), que es la del objetivo — `pje.trf5.jus.br/pjeconsulta/`, 1.er grado: SIGUE SIN VERIFICAR, y el motivo es su CAPTCHA de imagen.** Ese CAPTCHA está validado en servidor y bloquea la lista de resultados, así que nunca se ha visto una fila real de esa instancia. Lo que hay para ella es hipótesis razonada: marcadores estructurales que RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`), indexación por cabecera con sinónimos tolerantes en vez de por posición, cada fila anclada al formato del número CNJ y todo lo no reconocido a `camposExtra`. Cuando encuentra una tabla que estructuralmente es la de resultados pero cuyo contenido ya no reconoce, **lanza `EstructuraInesperadaError` en lugar de devolver filas a medias**: si la suposición es incorrecta, la ejecución se detiene con un mensaje que incluye la primera fila, no produce datos silenciosamente equivocados.
 
-**Dato medido que no es un fallo:** en el fixture del TRF1, de sus 30 filas solo **22 publican número CNJ**; en las otras 8 el rótulo dice solo «PJEC - *Assunto*» y la columna de movimentación llega vacía. Como `numeroProcesso` es la clave de deduplicación de todo el scraper, esas filas se omiten con una traza de depuración en lugar de emitir un registro con una clave inventada. En el fixture del TRF5 las 30 filas traen número y salen 30 procesos.
+**Dato medido que no es un fallo, y el agujero que abrió:** en el fixture del TRF1, de sus 30 filas solo **22 publican número CNJ**; en las otras 8 el rótulo dice solo «PJEC - *Assunto*» y la columna de movimentación llega vacía. Son procesos en *segredo de justiça*.
+
+Durante un tiempo esas 8 filas **se descartaban** con una traza de depuración, porque `numeroProcesso` era la clave de deduplicación de todo el scraper y no había con qué sustituirlo. Es decir: se tiraba el **27 % de la página** en silencio, contra un enunciado que pide extraer toda la información disponible. Ya no. Ahora salen las **30**, con `enSigilo: true`, sin `numeroProcesso` y con una `claveUnica` derivada del `ca=` de su ficha (ver **`claveUnica` y `numeroProcesso` no son el mismo campo**), y de ellas se extrae todo lo que el portal sí publica: clase judicial, sigla, asunto, las dos partes y el enlace a su ficha. Lo único que se descarta ahora es la fila que no tiene **ni** número **ni** enlace —no hay clave posible con la que guardarla—, y eso se dice con un `log.warn`, no con un `debug`.
+
+Por el mismo motivo, `EstructuraInesperadaError` ya no se lanza cuando ninguna fila trae número, sino cuando ninguna trae **ni número ni enlace**: una página entera de procesos en segredo de justiça es legítima, y con el criterio anterior habría abortado la extracción tomándola por rota.
+
+En el fixture del TRF5 las 30 filas traen número y salen 30 procesos, ninguno en sigilo.
 
 **La navegación a la ficha está verificada en la variante moderna.** La fila publica la ficha como una URL (`openPopUp('…','/<ctx>/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=<hash>')`) y el portal la sirve con un GET normal y las cookies de la sesión, sin CAPTCHA. La Fase 2 la usa tal cual y **ni siquiera necesita rehacer la búsqueda**. En la variante antigua ese control sigue sin capturarse: `parser.ts` lo lee con un criterio deliberadamente estrecho —el control rotulado con el propio número del proceso, la única señal autoverificable, o el único de la fila—, y con varios controles y ninguno rotulado con el número **no adivina**: omite `apertura`, y la Fase 2 anota el proceso en `failed.json` con fase `ficha` y sigue. Un `apertura` equivocado descargaría el documento de otra cosa con aspecto de estar funcionando, que es peor que no descargar nada.
 
@@ -372,7 +418,7 @@ Dos decisiones del arnés que conviene conocer:
 | 6. Repositorio con fuente, `package.json`, `README.md` y `.gitignore` | Los cuatro están en la raíz del repositorio |
 | Tip: delays entre peticiones | `CONFIG.delayBetweenRequestsMs` (2 s), impuesto por `ClienteHttp` en cada petición, y `CONFIG.delayBetweenDownloadsMs` (3 s) entre PDF |
 | Tip: retry inteligente | `withRetry` clasifica antes de reaccionar: fatales sin dormir, transitorios con retroceso, y una espera específica de 90 s para el pool agotado del TRF5 |
-| Tip: datos en formato estructurado | `output/records.json` (indexado por CNJ) y `output/records.csv` (RFC 4180, BOM UTF-8) |
+| Tip: datos en formato estructurado | `output/records.json` (indexado por `claveUnica`) y `output/records.csv` (RFC 4180, BOM UTF-8) |
 | Tip: probar con un subconjunto | `NOME_PARTE`, `NUMERO_PROCESSO`, `MAX_PAGINAS` y `MAX_DESCARGAS` |
 | Tip: logging del progreso | `src/utils/logger.ts`, con una línea por página, descarga y reintento, y `DEBUG=1` para el detalle HTTP |
 | Tip: PDF en carpeta organizada | `output/pdfs/`, con el número de proceso como prefijo para que los documentos de un mismo expediente queden agrupados al ordenar |
