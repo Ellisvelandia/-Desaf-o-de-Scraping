@@ -4,8 +4,15 @@ node_modules/
 # salida de compilacion
 dist/
 
-# datos recogidos y artefactos descargados
-output/
+# datos recogidos y artefactos descargados.
+# Se ignora el CONTENIDO de output/ (no el directorio) para poder reincluir una
+# sola carpeta: git no puede reincluir un fichero si su directorio padre está
+# excluido, así que `output/` a secas no dejaría versionar la muestra.
+output/*
+# ...salvo una muestra de PDF reales de cada portal, versionada como evidencia de
+# que la descarga funciona de punta a punta. El resto de output/ (records.json,
+# state.json, logs, failed.json, los directorios pdfs/ completos) sigue fuera.
+!output/muestra-pdfs/
 
 # capturas crudas de reconocimiento (grandes, pueden contener cookies)
 .scrape-cache/

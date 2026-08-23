@@ -27,7 +27,9 @@ desde la IP doméstica de la máquina de pruebas, sin necesidad de VPN.
 Son datos publicados por el propio tribunal para consulta pública y el
 organizador del desafío declara que ya posee la información y que el scraper se
 usa únicamente como prueba técnica. Se recoge lo que el portal publica y nada
-más; no se redistribuye.
+más; no se redistribuye salvo la muestra descrita abajo.
+
+**Muestra versionada.** Se sube al repositorio una muestra reducida de PDF reales de cada portal (`output/muestra-pdfs/`) como evidencia de que la descarga funciona de punta a punta. Son resoluciones ya publicadas por el propio poder judicial para consulta pública y sin acceso restringido; el organizador del desafío declara que ya posee la información. Es una muestra, no el corpus, y el resto de la salida —incluidos los directorios de descarga completos— queda fuera del control de versiones.
 
 **Señales de protección.** Las cookies `trf5…` con `Max-Age=30` corresponden a
 un WAF F5 con defensa anti-bot. Ritmo conservador desde el primer request.
@@ -69,7 +71,7 @@ acepta términos para consultar.
 **Datos personales.** Las resoluciones publicadas en este portal vienen
 sistematizadas por materia y sumilla; a diferencia del PJe brasileño, la lista no
 publica nombres de las partes. Se recoge lo que el portal publica y nada más; no
-se redistribuye.
+se redistribuye salvo la muestra versionada que se describe en el alcance del TRF5.
 
 **Señales de protección.** WAF Radware que responde `403` a las peticiones que no
 llegan desde Perú. Es un control de acceso por geolocalización, no un mecanismo
