@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head><title>Consulta Publica - resultados (fixture sintetico)</title></head>
+<body>
+<!--
+  Fixture SINTETICO que imita la lista de resultados de una `rich:dataTable`
+  de RichFaces 3.3 tal como la sirve el PJe.
+
+  NO es una captura del portal: la forma exacta de la fila real no esta
+  verificada (ver docs/protocol.md, apartado "forma de la fila"). Lo que si
+  esta verificado, y es lo unico que este fixture reproduce, son los
+  marcadores estructurales que RichFaces 3.3 genera siempre:
+  `table.rich-table`, `tr.rich-table-row` y el `tbody` con sufijo `:tb`.
+
+  Contenido pensado para ejercer, en una sola pagina, los cuatro caminos del
+  parser: mapeo por cabecera, fecha convertible a ISO, fecha ilegible que se
+  conserva cruda, y columna desconocida que cae en `camposExtra`.
+-->
+<div id="consultaPublicaReRenderDiv">
+<table class="rich-table" id="consultaPublicaForm:consultaPublicaList">
+  <thead class="rich-table-thead">
+    <!-- RichFaces suele anteponer una fila de titulo de una sola celda: no describe columnas. -->
+    <tr class="rich-table-subheader"><th colspan="7" class="rich-table-subheadercell">Processos encontrados</th></tr>
+    <tr class="rich-table-subheader">
+      <th class="rich-table-subheadercell">Processo</th>
+      <th class="rich-table-subheadercell">Classe Judicial</th>
+      <th class="rich-table-subheadercell">&Oacute;rg&atilde;o Julgador</th>
+      <th class="rich-table-subheadercell">Data da Autua&ccedil;&atilde;o</th>
+      <th class="rich-table-subheadercell">Polo Ativo</th>
+      <th class="rich-table-subheadercell">Polo Passivo</th>
+      <th class="rich-table-subheadercell">Situa&ccedil;&atilde;o</th>
+    </tr>
+  </thead>
+  <tbody id="consultaPublicaForm:consultaPublicaList:tb">
+    <tr class="rich-table-row">
+      <td class="rich-table-cell"><a href="#" onclick="return false;">0000001-11.2024.4.05.8300</a></td>
+      <td class="rich-table-cell">PROCEDIMENTO COMUM C&Iacute;VEL</td>
+      <td class="rich-table-cell">1&ordf; Vara Federal de Pernambuco</td>
+      <td class="rich-table-cell">12/03/2024</td>
+      <td class="rich-table-cell">JO&Atilde;O DA SILVA</td>
+      <td class="rich-table-cell">UNI&Atilde;O FEDERAL</td>
+      <td class="rich-table-cell">Em andamento</td>
+    </tr>
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">0000002-22.2023.4.05.8100</td>
+      <td class="rich-table-cell">MANDADO DE SEGURAN&Ccedil;A C&Iacute;VEL</td>
+      <td class="rich-table-cell">2&ordf; Vara Federal do Cear&aacute;</td>
+      <td class="rich-table-cell">01/12/2023</td>
+      <!-- Dos partes separadas por <br>: el parser debe emitir dos, no una concatenada. -->
+      <td class="rich-table-cell">MARIA SOUZA<br />PEDRO LIMA</td>
+      <td class="rich-table-cell">INSTITUTO NACIONAL DO SEGURO SOCIAL</td>
+      <td class="rich-table-cell">Arquivado</td>
+    </tr>
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">0000003-33.2022.4.05.8200</td>
+      <td class="rich-table-cell">EXECU&Ccedil;&Atilde;O FISCAL</td>
+      <td class="rich-table-cell">3&ordf; Vara Federal da Para&iacute;ba</td>
+      <!-- Fecha que no se puede interpretar: debe conservarse cruda, no inventarse. -->
+      <td class="rich-table-cell">N&atilde;o informada</td>
+      <!-- Papel explicito dentro de la celda: debe ganar al papel de la cabecera. -->
+      <td class="rich-table-cell">AUTOR: EMPRESA XPTO LTDA</td>
+      <td class="rich-table-cell">FAZENDA NACIONAL</td>
+      <td class="rich-table-cell">Suspenso</td>
+    </tr>
+  </tbody>
+</table>
+<div class="rich-datascr" id="consultaPublicaForm:scroller">
+  Exibindo 1 a 3 de 3 registros
+</div>
+</div>
+</body>
+</html>

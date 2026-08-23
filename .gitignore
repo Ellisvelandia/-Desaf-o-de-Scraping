@@ -1,0 +1,19 @@
+# dependencias
+node_modules/
+
+# salida de compilacion
+dist/
+
+# datos recogidos y artefactos descargados
+output/
+
+# capturas crudas de reconocimiento (grandes, pueden contener cookies)
+.scrape-cache/
+
+# entorno
+.env
+*.log
+
+# sistema
+.DS_Store
+Thumbs.db

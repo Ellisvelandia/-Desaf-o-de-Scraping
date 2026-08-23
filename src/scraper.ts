@@ -1,0 +1,361 @@
+/**
+ * Orquestador del scraper.
+ *
+ * Coordina las dos fases que pide el desafío:
+ *   Fase 1 — recorrer el paginador y extraer los metadatos de cada proceso.
+ *   Fase 2 — descargar los PDF de los procesos ya indexados.
+ *
+ * Ambas son reanudables e independientes: la Fase 1 se puede repetir sin duplicar
+ * nada, y la Fase 2 se puede lanzar en otro momento sobre lo que la Fase 1 dejó.
+ */
+import * as fs from 'fs';
+import { CONFIG } from './config';
+import { CriteriosBusqueda, SesionPje } from './session';
+import { ResolutorCaptcha } from './captcha/humano';
+import { detectarTotalResultados, parsearDocumentos, parsearProcesos, EstructuraInesperadaError } from './parser';
+import { construirOpcionesPagina, detectarPaginacion, hayPaginaSiguiente } from './paginacion';
+import { Persistencia } from './persistencia';
+import { ServicioDescarga } from './descarga';
+import { EstadoEjecucion, ProcesoJudicial } from './types';
+import { log } from './utils/logger';
+import { ServidorSaturadoError, SesionCaducadaError, sleep } from './utils/retry';
+
+/** Páginas vacías consecutivas que se exigen antes de dar la extracción por terminada. */
+const PAGINAS_VACIAS_PARA_TERMINAR = 2;
+
+/**
+ * Tope de páginas por ejecución, como red de seguridad ante un paginador que no
+ * termine.
+ *
+ * Se valida en vez de confiar en `Number()`: un `MAX_PAGINAS=quinientas` daría
+ * `NaN`, `pagina <= NaN` sería siempre falso y la Fase 1 terminaría sin extraer
+ * nada informando de cero procesos, que parece un portal vacío y no un error de
+ * configuración.
+ */
+export function enteroPositivo(valor: string | undefined, porDefecto: number, etiqueta: string): number {
+  if (valor === undefined || valor.trim() === '') return porDefecto;
+  const n = Number(valor);
+  if (!Number.isInteger(n) || n < 1) {
+    log.warn(`${etiqueta}="${valor}" no es un entero positivo: se usa ${porDefecto}`);
+    return porDefecto;
+  }
+  return n;
+}
+
+const MAX_PAGINAS = enteroPositivo(process.env.MAX_PAGINAS, 10000, 'MAX_PAGINAS');
+
+export interface OpcionesScraper {
+  criterios: CriteriosBusqueda;
+  /** Límite de documentos a descargar en la Fase 2. Sirve para demostrar sin bajarlo todo. */
+  maxDescargas?: number;
+}
+
+export class Scraper {
+  private readonly persistencia = new Persistencia();
+
+  constructor(private readonly captcha: ResolutorCaptcha) {}
+
+  /**
+   * Fase 1: extracción de metadatos.
+   *
+   * Reanuda desde `state.json`: si una ejecución anterior llegó a la página N,
+   * esta avanza hasta N antes de empezar a acumular. El coste de una interrupción
+   * es, como máximo, una página.
+   */
+  async fase1(opciones: OpcionesScraper): Promise<number> {
+    log.info('=== FASE 1 · Extracción de metadatos ===');
+
+    const procesos = this.persistencia.cargarProcesos();
+    const estadoPrevio = this.persistencia.cargarEstado();
+    const desde = estadoPrevio?.extraccionCompletada ? 0 : (estadoPrevio?.ultimaPaginaCompletada ?? 0);
+    if (desde > 0) log.info(`Reanudando: la ejecución anterior completó hasta la página ${desde}`);
+    if (estadoPrevio?.extraccionCompletada) log.info('La extracción ya estaba marcada como completa; se repite desde el principio');
+
+    const sesion = new SesionPje(this.captcha);
+    await sesion.abrir();
+
+    if (!(await sesion.buscar(opciones.criterios))) {
+      log.error(`La búsqueda no devolvió resultados. Mensajes del portal: ${sesion.mensajesDelServidor() || 'ninguno'}`);
+      return 0;
+    }
+
+    const total = detectarTotalResultados(sesion.documento);
+    if (total !== undefined) log.info(`El portal anuncia ${total} resultados`);
+
+    let pagina = 1;
+    let vaciasSeguidas = 0;
+    let completada = false;
+    /**
+     * Última página que se llegó a parsear ENTERA. No es `pagina`: el bucle puede
+     * cortarse antes de procesar la página en curso (estructura cambiada), y
+     * guardar `pagina` en ese caso haría que la ejecución siguiente reanudara
+     * después de una página que nunca se leyó, perdiéndola en silencio.
+     */
+    let ultimaCompletada = desde;
+    /**
+     * Procesos vistos EN ESTA EJECUCIÓN. El corte por total anunciado no puede
+     * mirar `procesos.size`: ese mapa arrastra lo que dejaron ejecuciones
+     * anteriores, quizá con otro criterio de búsqueda, y con él una búsqueda
+     * nueva y más estrecha se daría por terminada en la primera página.
+     */
+    const vistosAhora = new Set<string>();
+
+    // Avance rápido hasta la página guardada. Una sesión nueva siempre empieza en la 1.
+    while (pagina <= desde && pagina < MAX_PAGINAS) {
+      if (!(await this.avanzarPagina(sesion, pagina + 1))) break;
+      pagina++;
+    }
+
+    while (pagina <= MAX_PAGINAS) {
+      let nuevosEnPagina = 0;
+      try {
+        const lote = parsearProcesos(sesion.documento, pagina);
+        nuevosEnPagina = this.persistencia.anadirProcesos(procesos, lote);
+        for (const p of lote) vistosAhora.add(p.numeroProcesso);
+        ultimaCompletada = pagina;
+        log.info(
+          `Página ${pagina}: ${lote.length} filas, ${nuevosEnPagina} nuevas ` +
+            `(acumulado ${procesos.size}, esta ejecución ${vistosAhora.size})`,
+        );
+
+        if (lote.length === 0) {
+          vaciasSeguidas++;
+          // Una página vacía puede ser un hipo del servidor. Se exige corroboración
+          // antes de declarar terminada la extracción y bloquear futuras ejecuciones.
+          if (vaciasSeguidas >= PAGINAS_VACIAS_PARA_TERMINAR) {
+            log.info(`${vaciasSeguidas} páginas vacías consecutivas: extracción completa`);
+            completada = true;
+            break;
+          }
+        } else {
+          vaciasSeguidas = 0;
+        }
+      } catch (e) {
+        if (e instanceof EstructuraInesperadaError) {
+          log.error(`La estructura de la tabla cambió: ${e.message}`);
+          this.persistencia.registrarFallo({ numeroProcesso: `pagina-${pagina}`, fase: 'pagina', motivo: e.message });
+          break;
+        }
+        throw e;
+      }
+
+      // Persistir en cada página, no al final: es lo que hace barata una interrupción.
+      this.persistencia.guardarProcesos(procesos);
+      this.persistencia.guardarEstado(this.estado(opciones.criterios, ultimaCompletada, false, total));
+
+      if (total !== undefined && vistosAhora.size >= total) {
+        log.info(`Alcanzado el total anunciado (${total}): extracción completa`);
+        completada = true;
+        break;
+      }
+
+      const control = detectarPaginacion(sesion.documento);
+      if (!hayPaginaSiguiente(control, pagina)) {
+        log.info('El paginador no ofrece más páginas: extracción completa');
+        completada = true;
+        break;
+      }
+
+      await sleep(CONFIG.delayBetweenRequestsMs);
+      if (!(await this.avanzarPagina(sesion, pagina + 1))) break;
+      pagina++;
+    }
+
+    this.persistencia.guardarProcesos(procesos);
+    this.persistencia.guardarEstado(this.estado(opciones.criterios, ultimaCompletada, completada, total));
+    const csv = this.persistencia.exportarCsv(procesos);
+    log.info(`Fase 1 terminada: ${procesos.size} procesos. JSON en ${CONFIG.recordsPath}, CSV en ${csv}`);
+    return procesos.size;
+  }
+
+  /**
+   * Fase 2: descarga de PDF.
+   *
+   * Abre una sesión nueva (el portal ata los identificadores de descarga al árbol
+   * de componentes de la sesión que los emitió) y recorre los procesos pendientes.
+   * Un documento que falla se registra y no interrumpe el resto.
+   */
+  async fase2(opciones: OpcionesScraper): Promise<number> {
+    log.info('=== FASE 2 · Descarga de PDF ===');
+
+    const procesos = this.persistencia.cargarProcesos();
+    if (procesos.size === 0) {
+      log.warn('No hay procesos indexados. Ejecuta antes la Fase 1.');
+      return 0;
+    }
+
+    const pendientes = [...procesos.values()].filter((p) => p.estado !== 'completado' && p.estado !== 'sin_documentos');
+    log.info(`${pendientes.length} procesos pendientes de ${procesos.size}`);
+
+    const sesion = new SesionPje(this.captcha);
+    await sesion.abrir();
+    if (!(await sesion.buscar(opciones.criterios))) {
+      log.error('No se pudo reabrir la búsqueda para la Fase 2');
+      return 0;
+    }
+
+    const descargas = new ServicioDescarga(sesion);
+    let bajados = 0;
+    const tope = opciones.maxDescargas ?? Infinity;
+
+    // La lista de resultados vive en el documento vigente y abrir una ficha lo
+    // sustituye. Se guarda una copia para volver a ella entre proceso y proceso:
+    // rehacer la búsqueda costaría otro CAPTCHA por cada expediente.
+    const listado = sesion.instantanea();
+
+    for (const proceso of pendientes) {
+      if (bajados >= tope) {
+        log.info(`Alcanzado el límite de ${tope} descargas de esta ejecución`);
+        break;
+      }
+
+      // Los documentos de un proceso están en SU ficha, no en la lista. Leerlos
+      // del documento vigente sin haber navegado atribuiría a todos los procesos
+      // los mismos enlaces de la página de resultados, que es peor que no tener
+      // ninguno: produce descargas equivocadas con aspecto de correctas.
+      if (!proceso.apertura) {
+        const motivo = 'La fila de la lista no publica de forma inequívoca cómo abrir la ficha del proceso';
+        log.warn(`${proceso.numeroProcesso}: ${motivo}`);
+        this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+        proceso.estado = 'fallido';
+        this.persistencia.guardarProcesos(procesos);
+        continue;
+      }
+
+      // La ficha se abre SIEMPRE, aunque `records.json` ya traiga sus documentos
+      // de una pasada anterior. Un `DescargaPostback` se reconstruye sobre el
+      // formulario vigente, y el control que descarga un documento solo existe
+      // —con un ViewState que JSF acepte— mientras su ficha es el documento
+      // vigente. Reutilizar la lista de documentos para ahorrarse la navegación
+      // enviaría el postback contra el formulario de la lista, que no lo conoce.
+      try {
+        await this.abrirFicha(sesion, proceso);
+      } catch (e) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        log.error(`No se pudo abrir la ficha de ${proceso.numeroProcesso}: ${motivo}`);
+        this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+        proceso.estado = 'fallido';
+        this.persistencia.guardarProcesos(procesos);
+
+        if (e instanceof SesionCaducadaError) {
+          // El portal rechazó el estado de vista restaurado. Todo intento
+          // posterior tendría el mismo destino, así que se corta aquí en vez de
+          // recorrer los procesos que quedan marcándolos fallidos uno a uno.
+          log.error('La sesión ya no acepta volver a la lista; se detiene la Fase 2. Relánzala para continuar.');
+          break;
+        }
+        sesion.restaurar(listado);
+        continue;
+      }
+
+      // Se persisten al leerlos, aunque la descarga falle después: son parte de
+      // «toda la información de cada documento» que pide el enunciado, y valen por
+      // sí mismos en `records.json`.
+      const documentos = parsearDocumentos(sesion.documento);
+      proceso.documentos = documentos;
+      this.persistencia.guardarProcesos(procesos);
+
+      const conArchivo = documentos.filter((d) => d.descarga !== undefined);
+      if (conArchivo.length === 0) {
+        proceso.estado = 'sin_documentos';
+        this.persistencia.guardarProcesos(procesos);
+        sesion.restaurar(listado);
+        continue;
+      }
+
+      const rutas: string[] = [];
+      for (const documento of conArchivo) {
+        try {
+          // `descargar` devuelve la ruta sin pedir nada cuando el fichero ya está
+          // validado en disco. Eso no es una descarga y no debe consumir el tope
+          // de `MAX_DESCARGAS`, o una segunda pasada agotaría el cupo saltando
+          // ficheros que ya tenía.
+          const yaEstaba = fs.existsSync(descargas.rutaDe(proceso, documento));
+          rutas.push(await descargas.descargar(proceso, documento));
+          if (!yaEstaba) bajados++;
+        } catch (e) {
+          const motivo = e instanceof Error ? e.message : String(e);
+          log.error(`Fallo al descargar "${documento.titulo}" de ${proceso.numeroProcesso}: ${motivo}`);
+          this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'documento', motivo });
+          // Un documento fallido no detiene el run: se registra y se sigue, como pide el desafío.
+        }
+        await sleep(CONFIG.delayBetweenDownloadsMs);
+      }
+
+      // Las rutas se deduplican: un mismo fichero puede reaparecer si la ficha
+      // repite el enlace o si el proceso ya se había descargado en otra pasada.
+      proceso.archivos = [...new Set([...(proceso.archivos ?? []), ...rutas])];
+      proceso.estado = rutas.length > 0 ? 'completado' : 'fallido';
+      // Persistir tras cada proceso: una interrupción cuesta un proceso, no el run.
+      this.persistencia.guardarProcesos(procesos);
+
+      // De vuelta a la lista para poder abrir la ficha del proceso siguiente.
+      sesion.restaurar(listado);
+    }
+
+    log.info(`Fase 2 terminada: ${bajados} archivos descargados en ${CONFIG.pdfDir}`);
+    return bajados;
+  }
+
+  // ---------------------------------------------------------------- internos
+
+  /**
+   * Abre la ficha de un proceso y la deja como documento vigente de la sesión.
+   *
+   * Los dos caminos que publica el portal son un postback JSF (el enlace es
+   * JavaScript y hay que reproducir el POST) o una URL de verdad. Cuál de los dos
+   * usa el TRF5 no está verificado —ver `docs/protocol.md`—, así que se soportan
+   * ambos y se decide por lo que la fila publicó, no por una suposición.
+   */
+  private async abrirFicha(sesion: SesionPje, proceso: ProcesoJudicial): Promise<void> {
+    const apertura = proceso.apertura;
+    if (!apertura) throw new Error('El proceso no trae ningún control de apertura');
+
+    if (apertura.tipo === 'url') {
+      await sesion.navegar(apertura.url);
+      return;
+    }
+    await sesion.accionA4J({
+      formId: apertura.formId,
+      control: apertura.control,
+      ...(apertura.parametros ? { parametros: apertura.parametros } : {}),
+    });
+  }
+
+  /** Pide la página `destino` al paginador. Devuelve false si no se pudo avanzar. */
+  private async avanzarPagina(sesion: SesionPje, destino: number): Promise<boolean> {
+    const control = detectarPaginacion(sesion.documento);
+    if (!control) {
+      log.warn('No se encontró control de paginación en el documento vigente');
+      return false;
+    }
+    try {
+      await sesion.accionA4J(construirOpcionesPagina(control, destino), `pagina-${destino}.xml`);
+      return true;
+    } catch (e) {
+      if (e instanceof SesionCaducadaError || e instanceof ServidorSaturadoError) {
+        log.warn(`No se pudo avanzar a la página ${destino}: ${e.message}`);
+        return false;
+      }
+      throw e;
+    }
+  }
+
+  private estado(
+    criterios: CriteriosBusqueda,
+    pagina: number,
+    completada: boolean,
+    total: number | undefined,
+  ): EstadoEjecucion {
+    return {
+      criterio: { ...criterios },
+      ultimaPaginaCompletada: pagina,
+      extraccionCompletada: completada,
+      totalAnunciado: total,
+      actualizadoEn: new Date().toISOString(),
+    };
+  }
+}
+
+/** Reexportado por comodidad para el punto de entrada. */
+export type { ProcesoJudicial };

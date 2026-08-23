@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta name="Ajax-Response" content="true" />
+<meta name="Ajax-Update-Ids" content="consultaPublicaReRenderDiv" />
+</head><body>
+<div id="consultaPublicaReRenderDiv">
+  <span id="marcaNueva">CON RESULTADOS</span>
+</div>
+<span id="ajax-view-state"><input type="hidden" name="javax.faces.ViewState" id="javax.faces.ViewState" value="j_id7" autocomplete="off" /></span>
+</body></html>

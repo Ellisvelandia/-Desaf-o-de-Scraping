@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>Consulta Publica - tabla degradada (fixture sintetico)</title></head>
+<body>
+<!--
+  Tabla de RichFaces con numeros CNJ reconocibles pero sin cabeceras y con
+  menos columnas de las minimas. El parser cae al plan posicional, comprueba
+  la forma y se niega a adivinar: lanza `EstructuraInesperadaError`.
+-->
+<table class="rich-table" id="consultaPublicaForm:consultaPublicaList">
+  <tbody id="consultaPublicaForm:consultaPublicaList:tb">
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">0000001-11.2024.4.05.8300</td>
+      <td class="rich-table-cell">PROCEDIMENTO COMUM C&Iacute;VEL</td>
+    </tr>
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">0000002-22.2023.4.05.8100</td>
+      <td class="rich-table-cell">EXECU&Ccedil;&Atilde;O FISCAL</td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

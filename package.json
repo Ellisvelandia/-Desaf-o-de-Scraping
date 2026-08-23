@@ -1,0 +1,42 @@
+{
+  "name": "desafio-scraping-pje-trf5",
+  "version": "1.0.0",
+  "description": "Scraper en TypeScript para la Consulta Pública del PJe TRF5 (Brasil): navegación JSF/Seam, extracción de metadatos, descarga de PDF y manejo de 429 con backoff exponencial.",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "fase1": "ts-node src/index.ts fase1",
+    "fase2": "ts-node src/index.ts fase2",
+    "completo": "ts-node src/index.ts completo",
+    "explorar": "ts-node src/explorar.ts",
+    "build": "tsc",
+    "test": "jest",
+    "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "keywords": [
+    "scraper",
+    "typescript",
+    "jsf",
+    "seam",
+    "pje",
+    "trf5"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.18.0",
+    "cheerio": "^1.2.0",
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.0.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  // `tsconfig.json` excluye `src/__tests__` para que las pruebas no entren en
+  // `dist/`. El efecto colateral es que `tsc --noEmit` tampoco las comprobaba:
+  // el arnés solo las tipaba al ejecutarlas con ts-jest. Esta configuración las
+  // comprueba sin emitir nada, y `npm run lint` corre las dos.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
