@@ -353,6 +353,69 @@ describe('registrarFallo', () => {
     expect(fallos.map((f) => f.fase).sort()).toEqual(['documento', 'ficha']);
   });
 
+  it('separa los fallos de DOS documentos distintos del mismo proceso', () => {
+    // El enunciado pide «registrar qué documentos fallaron para poder
+    // reintentarlos después». Con la clave anterior —(proceso, fase) a secas—
+    // dos documentos que fallan una vez cada uno producían UNA entrada con
+    // `intentos: 2`, indistinguible de un documento que falló dos veces: del
+    // fichero no se podía recuperar cuáles eran, que es justo lo que se pide.
+    const proceso = '0000001-11.2024.4.05.8300';
+    persistencia.registrarFallo({
+      claveUnica: proceso,
+      fase: 'documento',
+      documento: { id: '16026033', titulo: 'Despacho' },
+      motivo: '429 persistente',
+    });
+    persistencia.registrarFallo({
+      claveUnica: proceso,
+      fase: 'documento',
+      documento: { id: '16026096', titulo: 'Acórdão' },
+      motivo: 'HTML en lugar de PDF',
+    });
+
+    const fallos = persistencia.cargarFallos();
+
+    expect(fallos).toHaveLength(2);
+    expect(fallos.map((f) => f.documento?.id).sort()).toEqual(['16026033', '16026096']);
+    // Cada uno cuenta SUS intentos, que es lo que sirve para decidir cuándo
+    // rendirse con ese documento concreto.
+    expect(fallos.every((f) => f.intentos === 1)).toBe(true);
+  });
+
+  it('acumula intentos del MISMO documento en una sola entrada', () => {
+    const fallo = {
+      claveUnica: '0000001-11.2024.4.05.8300',
+      fase: 'documento',
+      documento: { id: '16026033', titulo: 'Despacho' },
+      motivo: '429',
+    };
+    persistencia.registrarFallo(fallo);
+    persistencia.registrarFallo({ ...fallo, motivo: '429 otra vez' });
+
+    const fallos = persistencia.cargarFallos();
+    expect(fallos).toHaveLength(1);
+    expect(fallos[0].intentos).toBe(2);
+  });
+
+  it('sin id, distingue los documentos por su título', () => {
+    const base = { claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' };
+    persistencia.registrarFallo({ ...base, documento: { titulo: 'Petição inicial' } });
+    persistencia.registrarFallo({ ...base, documento: { titulo: 'Certidão' } });
+
+    expect(persistencia.cargarFallos()).toHaveLength(2);
+  });
+
+  it('los fallos que no son de un documento siguen deduplicando por proceso y fase', () => {
+    // Una página o una ficha no tienen documento; su clave no debe cambiar de
+    // comportamiento por haber añadido el campo nuevo.
+    persistencia.registrarFallo({ claveUnica: 'pagina-340', fase: 'pagina', motivo: '429' });
+    persistencia.registrarFallo({ claveUnica: 'pagina-340', fase: 'pagina', motivo: '429 de nuevo' });
+
+    const fallos = persistencia.cargarFallos();
+    expect(fallos).toHaveLength(1);
+    expect(fallos[0].intentos).toBe(2);
+  });
+
   it('normaliza el contador de una entrada escrita sin intentos', () => {
     // Sin normalizar, el incremento daría NaN y el criterio de "cuántas veces
     // reintentar" dejaría de existir en silencio.

@@ -44,3 +44,43 @@ resolución: automatizarla sería evadir una detección de bots del titular del
 sitio. La decisión tomada, y consultada con el organizador del desafío, es
 mantener a una persona en ese punto —una vez por fase— y automatizar todo lo
 demás. Ver `README.md`, apartado «El CAPTCHA».
+
+---
+
+# Alcance y autorización — objetivo `peru`
+
+**Objetivo.** Jurisprudencia Nacional Sistematizada del Poder Judicial del Perú:
+`https://jurisprudencia.pj.gob.pe/jurisprudenciaweb/faces/page/resultado.xhtml`.
+Es el sitio que el enunciado nombra en su «Paso 1» y en su «Entregable».
+
+**Qué se recoge.** De cada resolución publicada: tipo de recurso, nº de
+expediente, pretensión o delito, tipo y fecha de resolución, sala suprema, norma
+de derecho interno, sumilla, palabras clave, y el PDF de la resolución.
+
+**Volumen.** El portal anuncia 15.247 páginas de diez resultados, unas 152.000
+resoluciones. El enunciado acepta una entrega que demuestre que el scraper puede
+llegar al final sin haberlo recorrido entero.
+
+**Carácter público.** Es un portal de difusión de jurisprudencia, de acceso libre
+y sin autenticación: su propósito declarado es «exponer los preceptos jurídicos
+vigentes … orientado a litigantes, abogados y ciudadanos». No exige registro ni
+acepta términos para consultar.
+
+**Datos personales.** Las resoluciones publicadas en este portal vienen
+sistematizadas por materia y sumilla; a diferencia del PJe brasileño, la lista no
+publica nombres de las partes. Se recoge lo que el portal publica y nada más; no
+se redistribuye.
+
+**Señales de protección.** WAF Radware que responde `403` a las peticiones que no
+llegan desde Perú. Es un control de acceso por geolocalización, no un mecanismo
+anti-bot con reto: no hay CAPTCHA, ni desafío de JavaScript, ni cookie que
+resolver. **No se evade nada**: la única forma soportada de ejecutar este
+objetivo es disponer de salida de red legítima desde Perú.
+
+**Ritmo.** Los mismos valores conservadores que en el otro objetivo: 2 s entre
+peticiones, 3 s entre descargas. El servlet de descarga ya devolvió un `503` en
+la primera petición del reconocimiento, así que el límite de tasa es real y el
+retroceso exponencial no es decorativo.
+
+**Bloqueos abiertos.** El botón «Ver Ficha» es un postback de RichFaces y no se
+ha decodificado. No se sigue, y el parser no finge un enlace para él.

@@ -1,0 +1,189 @@
+<!--
+  Página de resultados de la Jurisprudencia Nacional Sistematizada (Perú).
+
+  PROCEDENCIA, dicha sin adornos: la ESTRUCTURA es real —se leyó del DOM del
+  portal en vivo, recorriéndolo nodo a nodo— pero el marcado no es un volcado
+  literal de la respuesta. Se reconstruyó a partir de ese recorrido por dos
+  motivos: la captura íntegra arrastra el `javax.faces.ViewState` y las cookies
+  de una sesión real, que no tienen por qué acabar en un repositorio público, y
+  los `uuid` de descarga se sustituyen por marcadores para no publicar
+  identificadores de documentos ajenos.
+
+  Lo que SÍ es literal del portal, porque es lo que el parser necesita:
+    - las clases `rf-p` / `rf-p-hdr` / `rf-p-b` de cada panel de resultado
+    - la pareja rótulo/valor `div.col-md-12.txtbold` + `div.col-md-12`
+    - el enlace de descarga `/jurisprudenciaweb/ServletDescarga?uuid=…`
+    - el botón «Ver Ficha» con `href="#"` y postback RichFaces: VERIFICADO que
+      NO es una URL navegable, así que el parser no debe emitir `apertura`
+    - el paginador `rf-ds` con `rf-ds-nmb-btn`, `rf-ds-act` y `rf-ds-btn-next`
+    - el rótulo «Página: 1 de 15247», que cuenta PÁGINAS y no registros
+
+  Los tres paneles cubren los tres casos que el parser distingue: completo,
+  sin expediente (clave derivada del uuid) e inservible (se descarta).
+-->
+<html>
+  <body>
+    <form id="formBuscador" name="formBuscador" method="post" action="/jurisprudenciaweb/faces/page/resultado.xhtml">
+      <input type="hidden" name="formBuscador" value="formBuscador" />
+      <input type="hidden" name="javax.faces.ViewState" value="VIEWSTATE-DE-PRUEBA" />
+      <input type="text" name="formBuscador:txtBusqueda" value="amparo" />
+      <input type="text" name="formBuscador:buNroExpediente" value="Ingrese Nro de Expediente XXXX" />
+      <button onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt31':'formBuscador:j_idt31','forward':'buscar','busqueda':'especializada'},'');return false">
+        Buscar
+      </button>
+
+      <div class="col-md-12">
+        <span>Página: 1 de 15247</span>
+      </div>
+
+      <div class="col-md-12">
+        <span class="rf-ds" id="formBuscador:data1">
+          <span class="rf-ds-nmb-btn rf-ds-act">1</span>
+          <a class="rf-ds-nmb-btn" href="#">2</a>
+          <a class="rf-ds-nmb-btn" href="#">3</a>
+          <a class="rf-ds-btn rf-ds-btn-next" href="#">&#187;</a>
+          <a class="rf-ds-btn rf-ds-btn-last" href="#">&#187;&#187;</a>
+        </span>
+      </div>
+
+      <!-- Panel 1: completo. Expediente, todos los rótulos y enlace de descarga. -->
+      <div class="rf-p" id="formBuscador:data1:0:panel">
+        <div class="rf-p-hdr">
+          <table>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" name="formBuscador:data1:0:sel" /></td>
+                <td><span>Apelación</span></td>
+                <td><span>037233-2025</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="rf-p-b">
+          <br />
+          <div class="row">
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Pretensión/Delito:</div>
+              <div class="col-md-12">Acción de Amparo</div>
+            </div>
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Tipo Resolución:</div>
+              <div class="col-md-12">Ejecutoria Suprema</div>
+            </div>
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Fecha Resolución:</div>
+              <div class="col-md-12">14/08/2026</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Sala Suprema:</div>
+              <div class="col-md-12">Quinta Sala de Derecho Constitucional y Social Transitoria</div>
+            </div>
+            <div class="col-sm-8 marginb">
+              <div class="col-md-12 txtbold">Norma de Derecho Interno:</div>
+              <div class="col-md-12">Artículo 200 de la Constitución Política del Perú</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-sm-12 marginb">
+              <div class="col-md-12 txtbold">Sumilla:</div>
+              <div class="col-md-12">
+                De acuerdo con lo dispuesto en el artículo 17 del Reglamento Nacional de Responsabilidad Civil, se
+                entiende que la víctima de un accidente de tránsito tendrá la categoría de tercero no ocupante.
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-sm-12 marginb">
+              <div class="col-md-12 txtbold">Palabras Clave:</div>
+              <div class="col-md-12">Artículo 1 de la Constitución Política del Perú, numeral 2 del artículo V</div>
+            </div>
+          </div>
+          <table>
+            <tbody>
+              <tr>
+                <td>
+                  <a href="#" onclick="RichFaces.ajax('formBuscador:data1:0:verFicha',event,{})">
+                    <img src="/jurisprudenciaweb/faces/imagen/btn-ver-ficha.png" />
+                  </a>
+                </td>
+                <td></td>
+                <td>
+                  <a href="/jurisprudenciaweb/ServletDescarga?uuid=aaaaaaaa-1111-4bbb-8ccc-dddddddddddd">
+                    <img src="/jurisprudenciaweb/imagen/btn-ver-resolucion.png" class="social" />
+                  </a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel 2: SIN expediente en la cabecera, pero con enlace de descarga.
+           La clave debe salir del uuid, y no debe inventarse un expediente. -->
+      <div class="rf-p" id="formBuscador:data1:1:panel">
+        <div class="rf-p-hdr">
+          <table>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" name="formBuscador:data1:1:sel" /></td>
+                <td><span>Casación</span></td>
+                <td><span></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="rf-p-b">
+          <div class="row">
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Tipo Resolución:</div>
+              <div class="col-md-12">Ejecutoria Suprema</div>
+            </div>
+            <div class="col-sm-4 marginb">
+              <div class="col-md-12 txtbold">Fecha Resolución:</div>
+              <div class="col-md-12">31/02/2026</div>
+            </div>
+          </div>
+          <table>
+            <tbody>
+              <tr>
+                <td></td>
+                <td></td>
+                <td>
+                  <a href="/jurisprudenciaweb/ServletDescarga?uuid=bbbbbbbb-2222-4ccc-8ddd-eeeeeeeeeeee">
+                    <img src="/jurisprudenciaweb/imagen/btn-ver-resolucion.png" class="social" />
+                  </a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel 3: ni expediente ni enlace. No hay clave posible: se descarta
+           con aviso, nunca en silencio. -->
+      <div class="rf-p" id="formBuscador:data1:2:panel">
+        <div class="rf-p-hdr">
+          <table>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" name="formBuscador:data1:2:sel" /></td>
+                <td><span>Consulta</span></td>
+                <td><span></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="rf-p-b">
+          <div class="row">
+            <div class="col-sm-12 marginb">
+              <div class="col-md-12 txtbold">Sumilla:</div>
+              <div class="col-md-12">Resolución sin identificador publicado.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </body>
+</html>

@@ -95,7 +95,7 @@ Detalle de implementación que no es accidental: la respuesta A4J es XHTML, pero
                                     └─ fallo ──► Persistencia.registrarFallo
 ```
 
-Las dos fases son **independientes y reanudables**. La Fase 1 se puede repetir sin duplicar nada (el mapa está indexado por número CNJ) y la Fase 2 se puede lanzar en otro momento sobre lo que la Fase 1 dejó en disco. Cada una abre su propia sesión y pide su propio CAPTCHA, porque el portal ata los identificadores de descarga al árbol de componentes de la sesión que los emitió.
+Las dos fases son **independientes y reanudables**. La Fase 1 se puede repetir sin duplicar nada (el mapa está indexado por `claveUnica`) y la Fase 2 se puede lanzar en otro momento sobre lo que la Fase 1 dejó en disco. Cada una abre su propia sesión y pide su propio CAPTCHA, porque el portal ata los identificadores de descarga al árbol de componentes de la sesión que los emitió.
 
 ---
 
@@ -217,7 +217,8 @@ Los errores se propagan al llamante, que los anota en `failed.json` con `(claveU
 
 Dos formatos con propósitos distintos, y la diferencia entre ellos es deliberada.
 
-**`records.json`** es la fuente de verdad: objeto indexado por número CNJ, con toda la estructura anidada (partes, documentos, sus enlaces de descarga, `camposExtra`). Es lo que consume la Fase 2 y lo que permite reanudar.
+**`records.json`** es la fuente de verdad: objeto indexado por **`claveUnica`** —no por el número CNJ, porque hay
+procesos que el portal publica sin número (ver la sección 6)—, con toda la estructura anidada (partes, documentos, sus enlaces de descarga, `camposExtra`). Es lo que consume la Fase 2 y lo que permite reanudar.
 
 **`records.csv`** es para que una persona lo abra en una hoja de cálculo. Solo lleva las **columnas estables del contrato**; `camposExtra` queda fuera a propósito, porque su forma depende de las cabeceras que publique el portal ese día y una cabecera variable rompe cualquier consumidor del CSV. Los documentos van como recuento, no volcados: sus títulos son largos y convertirían la celda en un párrafo ilegible.
 

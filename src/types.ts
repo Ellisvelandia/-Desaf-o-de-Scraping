@@ -43,8 +43,17 @@ export interface DescargaPostback {
   parametros?: Record<string, string>;
 }
 
-/** Estado de un proceso dentro del flujo del scraper. */
-export type EstadoProceso = 'pendiente' | 'completado' | 'sin_documentos' | 'fallido';
+/**
+ * Estado de un proceso dentro del flujo del scraper.
+ *
+ * `parcial` existe porque sin él el enunciado quedaba a medias. Un proceso con
+ * quince documentos donde trece bajan y dos dan 429 tiene `archivos.length > 0`,
+ * y marcarlo `completado` lo sacaba para siempre del filtro de pendientes: el
+ * fallo quedaba anotado en `failed.json` pero **ninguna pasada posterior volvía a
+ * intentarlo**, que es justo lo contrario de «registrar qué documentos fallaron
+ * para poder reintentarlos después».
+ */
+export type EstadoProceso = 'pendiente' | 'completado' | 'parcial' | 'sin_documentos' | 'fallido';
 
 /** Un proceso judicial extraído de la lista de resultados. */
 export interface ProcesoJudicial {
@@ -145,6 +154,15 @@ export interface Fallo {
   claveUnica: string;
   /** Qué se intentaba: 'documento' | 'pagina' | 'ficha'. */
   fase: string;
+  /**
+   * Qué documento concreto falló, cuando la fase es `documento`.
+   *
+   * Sin este campo el registro no era accionable y el requisito quedaba a medias:
+   * un proceso con quince documentos y dos fallos producía UNA entrada con
+   * `intentos: 2`, indistinguible de un documento que falló dos veces. Quien
+   * quisiera reintentar «los documentos que fallaron» no podía saber cuáles eran.
+   */
+  documento?: { id?: string; titulo: string };
   motivo: string;
   intentos: number;
   ultimoIntentoEn: string;

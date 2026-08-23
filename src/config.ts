@@ -6,7 +6,70 @@
  */
 import * as path from 'path';
 
+/**
+ * Portales que sabe recorrer este scraper.
+ *
+ * Son DOS porque el enunciado nombra dos sitios y no dice cuál manda: bajo
+ * «Sitio web a scrapear» aparece el PJe del TRF5 (Brasil), pero tanto el Paso 1
+ * como el Entregable dicen literalmente «asegúrate de que funcione correctamente
+ * con el sitio» y ahí el sitio es la Jurisprudencia Nacional Sistematizada del
+ * Poder Judicial del Perú. Implementar los dos es la única lectura que cumple el
+ * enunciado entero, en vez de apostar por una de las dos y acertar o no.
+ */
+export type Objetivo = 'trf5' | 'peru';
+
+interface PerfilObjetivo {
+  baseUrl: string;
+  /** Página de entrada donde vive el formulario de búsqueda. */
+  landingPath: string;
+  /** Página que recibe los POST de paginación. */
+  resultadoPath: string;
+  /** Idiomas que se declaran, en el idioma del portal. */
+  acceptLanguage: string;
+  /** Subcarpeta de `output/`. Vacía para el TRF5, que es el objetivo histórico. */
+  subdirectorio: string;
+}
+
+const PERFILES: Record<Objetivo, PerfilObjetivo> = {
+  trf5: {
+    baseUrl: 'https://pje.trf5.jus.br',
+    landingPath: '/pjeconsulta/ConsultaPublica/listView.seam',
+    resultadoPath: '/pjeconsulta/ConsultaPublica/listView.seam',
+    acceptLanguage: 'pt-BR,pt;q=0.9,es;q=0.8,en;q=0.7',
+    subdirectorio: '',
+  },
+  peru: {
+    baseUrl: 'https://jurisprudencia.pj.gob.pe',
+    landingPath: '/jurisprudenciaweb/faces/page/inicio.xhtml',
+    resultadoPath: '/jurisprudenciaweb/faces/page/resultado.xhtml',
+    acceptLanguage: 'es-PE,es;q=0.9,en;q=0.8',
+    subdirectorio: 'peru',
+  },
+};
+
+/**
+ * Objetivo activo.
+ *
+ * Se resuelve por `TARGET` o por el argumento de la línea de órdenes, y cae en
+ * `trf5` ante cualquier otra cosa. El valor por defecto NO es una preferencia:
+ * es lo que mantiene idéntico el comportamiento de quien ya usaba este scraper
+ * antes de que existiera el segundo objetivo.
+ */
+function resolverObjetivo(): Objetivo {
+  const crudo = (process.env.TARGET ?? process.argv.slice(2).find((a) => a === 'peru' || a === 'trf5') ?? '')
+    .trim()
+    .toLowerCase();
+  return crudo === 'peru' ? 'peru' : 'trf5';
+}
+
+export const OBJETIVO: Objetivo = resolverObjetivo();
+
+const PERFIL = PERFILES[OBJETIVO];
+
 export const CONFIG = {
+  /** Objetivo activo, para que los logs y la salida digan contra qué se corrió. */
+  objetivo: OBJETIVO,
+
   /**
    * Origen del portal.
    *
@@ -14,10 +77,16 @@ export const CONFIG = {
    * tribunales: apuntar a otra instancia debe ser cambiar una variable, no tocar
    * el código. Las rutas de cada llamada se siguen leyendo del HTML.
    */
-  baseUrl: process.env.PJE_BASE_URL ?? 'https://pje.trf5.jus.br',
+  baseUrl: process.env.PJE_BASE_URL ?? PERFIL.baseUrl,
 
   /** Página de entrada de la Consulta Pública (JSF/Seam). */
-  landingPath: process.env.PJE_LANDING_PATH ?? '/pjeconsulta/ConsultaPublica/listView.seam',
+  landingPath: process.env.PJE_LANDING_PATH ?? PERFIL.landingPath,
+
+  /** Página que atiende los POST de paginación. */
+  resultadoPath: process.env.PJE_RESULTADO_PATH ?? PERFIL.resultadoPath,
+
+  /** Idiomas declarados, en el idioma del portal de destino. */
+  acceptLanguage: PERFIL.acceptLanguage,
 
   /** Identidad declarada. No se simula ningún navegador en particular más allá del UA. */
   userAgent:
@@ -81,8 +150,19 @@ export const CONFIG = {
   /** Renovaciones de sesión permitidas en una ejecución antes de rendirse. */
   maxSessionRenewals: 5,
 
-  /** Directorios de salida. */
-  outputDir: path.resolve(__dirname, '..', 'output'),
+  /**
+   * Directorios de salida, separados por objetivo.
+   *
+   * Cada portal tiene su carpeta porque `records.json` y `state.json` se indexan
+   * por clave de proceso y guardan la página por la que iba la extracción. Con
+   * una sola carpeta, correr el objetivo peruano sobre la salida del TRF5
+   * reanudaría en la página que dejó el otro portal y mezclaría en un mismo
+   * fichero registros de dos jurisdicciones distintas.
+   *
+   * El TRF5 se queda en `output/` a secas —sin subcarpeta— para no invalidar las
+   * rutas que ya documentan el README y `docs/evidencia/`.
+   */
+  outputDir: path.resolve(__dirname, '..', 'output', PERFIL.subdirectorio),
   get pdfDir() {
     return path.join(this.outputDir, 'pdfs');
   },

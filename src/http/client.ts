@@ -46,7 +46,9 @@ export class ClienteHttp {
       headers: {
         'User-Agent': CONFIG.userAgent,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,es;q=0.8,en;q=0.7',
+        // Del perfil del objetivo: declarar portugués contra un portal peruano
+        // no rompe nada, pero es una identidad falsa gratuita.
+        'Accept-Language': CONFIG.acceptLanguage,
       },
     });
 
@@ -137,6 +139,22 @@ export class ClienteHttp {
     const tipo = String(r.headers['content-type'] ?? '');
     if (!/text\/html/i.test(tipo)) return;
     const cabecera = this.decodificar(r.data.subarray(0, 4096), tipo);
+
+    // Bloqueo geográfico del WAF Radware del portal peruano. Se reconoce por su
+    // firma —un 403 cuyo cuerpo entero es «403 Forbidden» más un «Transaction
+    // ID»— y no por el objetivo activo, porque lo que identifica al bloqueo es la
+    // respuesta, no contra qué host se pidió.
+    //
+    // Sin esto, el fallo MÁS probable de ese objetivo salía por consola como una
+    // traza de `HTTP 403 en GET …`, que no dice lo único que hay que saber para
+    // resolverlo: que el portal solo atiende desde Perú y que una VPN de
+    // extensión de navegador no basta porque no enruta el proceso de Node.
+    if (r.status === 403 && /Transaction ID/i.test(cabecera) && /403 Forbidden/i.test(cabecera)) {
+      throw new BloqueadoPorWafError(
+        'El WAF del portal rechazó esta dirección IP con un 403 (bloqueo por geolocalización)',
+      );
+    }
+
     if (/Requisi[cç][aã]o\s*-?\s*Rejeitada|seu acesso ao servi[cç]o foi bloqueado/i.test(cabecera)) {
       throw new BloqueadoPorWafError();
     }

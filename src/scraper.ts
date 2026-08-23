@@ -19,7 +19,7 @@ import { Persistencia } from './persistencia';
 import { ServicioDescarga } from './descarga';
 import { DocumentoProceso, EstadoEjecucion, ProcesoJudicial } from './types';
 import { log } from './utils/logger';
-import { ServidorSaturadoError, SesionCaducadaError, sleep } from './utils/retry';
+import { esReintentable, ServidorSaturadoError, SesionCaducadaError, sleep } from './utils/retry';
 
 /** Páginas vacías consecutivas que se exigen antes de dar la extracción por terminada. */
 const PAGINAS_VACIAS_PARA_TERMINAR = 2;
@@ -45,6 +45,29 @@ export function enteroPositivo(valor: string | undefined, porDefecto: number, et
 
 const MAX_PAGINAS = enteroPositivo(process.env.MAX_PAGINAS, 10000, 'MAX_PAGINAS');
 
+/**
+ * ¿Son el mismo criterio de búsqueda?
+ *
+ * Se comparan las claves con valor, no los objetos: `{a:'1'}` y
+ * `{a:'1', b:undefined}` describen la misma búsqueda, y un `JSON.stringify` los
+ * daría por distintos —descartando una reanudación legítima— solo porque una
+ * versión del código añadió un campo opcional que nadie rellenó.
+ */
+export function mismoCriterio(
+  a: Readonly<Record<string, string | undefined>>,
+  // Los criterios concretos (`CriteriosBusqueda`, `CriteriosPeru`) son interfaces
+  // sin índice de cadena, así que no encajan en `Record` sin este ensanchado.
+  b: Readonly<Record<string, string | undefined>> | object,
+): boolean {
+  const util = (o: object): Array<[string, string]> =>
+    Object.entries(o)
+      .filter((par): par is [string, string] => par[1] !== undefined && par[1] !== '')
+      .sort(([x], [y]) => x.localeCompare(y));
+  const ma = util(a);
+  const mb = util(b);
+  return ma.length === mb.length && ma.every(([k, v], i) => mb[i][0] === k && mb[i][1] === v);
+}
+
 export interface OpcionesScraper {
   criterios: CriteriosBusqueda;
   /** Límite de documentos a descargar en la Fase 2. Sirve para demostrar sin bajarlo todo. */
@@ -68,7 +91,18 @@ export class Scraper {
 
     const procesos = this.persistencia.cargarProcesos();
     const estadoPrevio = this.persistencia.cargarEstado();
-    const desde = estadoPrevio?.extraccionCompletada ? 0 : (estadoPrevio?.ultimaPaginaCompletada ?? 0);
+    // Reanudar solo tiene sentido sobre LA MISMA búsqueda: la página 50 de
+    // «SILVA» no es la página 50 de «SOUZA». Sin esta comprobación, cambiar el
+    // criterio tras una interrupción hacía que el avance rápido saltara las 50
+    // primeras páginas de la búsqueda nueva y las diera por extraídas.
+    const mismaBusqueda = estadoPrevio === undefined || mismoCriterio(estadoPrevio.criterio, opciones.criterios);
+    if (!mismaBusqueda) {
+      log.warn(
+        'El criterio de búsqueda cambió respecto de la ejecución anterior: se ignora la página guardada y se ' +
+          'empieza desde la primera.',
+      );
+    }
+    const desde = estadoPrevio?.extraccionCompletada || !mismaBusqueda ? 0 : (estadoPrevio?.ultimaPaginaCompletada ?? 0);
     if (desde > 0) log.info(`Reanudando: la ejecución anterior completó hasta la página ${desde}`);
     if (estadoPrevio?.extraccionCompletada) log.info('La extracción ya estaba marcada como completa; se repite desde el principio');
 
@@ -364,6 +398,7 @@ export class Scraper {
       }
 
       const rutas: string[] = [];
+      let fallidos = 0;
       for (const documento of conArchivo) {
         try {
           // `descargar` devuelve la ruta sin pedir nada cuando el fichero ya está
@@ -376,7 +411,15 @@ export class Scraper {
         } catch (e) {
           const motivo = e instanceof Error ? e.message : String(e);
           log.error(`Fallo al descargar "${documento.titulo}" de ${etiqueta}: ${motivo}`);
-          this.persistencia.registrarFallo({ claveUnica: proceso.claveUnica, fase: 'documento', motivo });
+          fallidos++;
+          // El documento va en el registro: sin él, «qué documentos fallaron» no
+          // se puede responder desde `failed.json`, que es lo que el enunciado pide.
+          this.persistencia.registrarFallo({
+            claveUnica: proceso.claveUnica,
+            fase: 'documento',
+            documento: { ...(documento.id ? { id: documento.id } : {}), titulo: documento.titulo },
+            motivo,
+          });
           // Un documento fallido no detiene el run: se registra y se sigue, como pide el desafío.
         }
         await sleep(CONFIG.delayBetweenDownloadsMs);
@@ -385,7 +428,13 @@ export class Scraper {
       // Las rutas se deduplican: un mismo fichero puede reaparecer si la ficha
       // repite el enlace o si el proceso ya se había descargado en otra pasada.
       proceso.archivos = [...new Set([...(proceso.archivos ?? []), ...rutas])];
-      proceso.estado = rutas.length > 0 ? 'completado' : 'fallido';
+      // `completado` SOLO si no quedó ningún documento por bajar. Con el criterio
+      // anterior —«bajó al menos uno»— un proceso con trece PDF y dos 429 salía
+      // del filtro de pendientes para siempre, y sus dos fallos, aunque estuvieran
+      // anotados, no los reintentaba ninguna pasada posterior. `parcial` los deja
+      // dentro: `descargar` salta los ficheros ya validados, así que reintentarlo
+      // cuesta solo los que faltan.
+      proceso.estado = fallidos === 0 ? 'completado' : rutas.length > 0 ? 'parcial' : 'fallido';
       // Persistir tras cada proceso: una interrupción cuesta un proceso, no el run.
       this.persistencia.guardarProcesos(procesos);
 
@@ -439,8 +488,16 @@ export class Scraper {
       await sesion.accionA4J(construirOpcionesPagina(control, destino), `pagina-${destino}.xml`);
       return true;
     } catch (e) {
-      if (e instanceof SesionCaducadaError || e instanceof ServidorSaturadoError) {
-        log.warn(`No se pudo avanzar a la página ${destino}: ${e.message}`);
+      // Un transitorio agotado —429 que sigue llegando tras los cuatro intentos de
+      // `withRetry`, o un corte de red— se trata como FIN ORDENADO del recorrido,
+      // no como error mortal. Propagarlo mataba el proceso con «Error no
+      // recuperable» y sin escribir el CSV, dejando una extracción de horas a
+      // medias y un mensaje falso: `state.json` ya guardaba la última página
+      // completada, así que relanzar reanudaba sin perder nada.
+      if (e instanceof SesionCaducadaError || e instanceof ServidorSaturadoError || esReintentable(e)) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        log.warn(`No se pudo avanzar a la página ${destino}: ${motivo}`);
+        this.persistencia.registrarFallo({ claveUnica: `pagina-${destino}`, fase: 'pagina', motivo });
         return false;
       }
       throw e;

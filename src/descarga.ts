@@ -21,6 +21,7 @@
  * impone la pausa mínima entre peticiones, que es un suelo, no un sustituto.
  */
 import { AxiosResponse } from 'axios';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CONFIG } from './config';
@@ -62,8 +63,23 @@ export class DescargaInvalidaError extends Error {
   }
 }
 
+/**
+ * Lo que este servicio necesita de una sesión, y nada más.
+ *
+ * Se declara como interfaz en vez de atarse a `SesionPje` porque el scraper
+ * recorre DOS portales: el PJe del TRF5 y la Jurisprudencia Nacional del Perú.
+ * Los dos descargan igual —una petición con las cookies de la sesión y una
+ * validación de los bytes—, y duplicar este módulo para el segundo habría
+ * duplicado también sus tres invariantes, que son justo lo que no debe
+ * divergir entre objetivos.
+ */
+export interface SesionDescargable {
+  readonly http: SesionPje['http'];
+  formularioActual(formId?: string): ReturnType<SesionPje['formularioActual']>;
+}
+
 export class ServicioDescarga {
-  constructor(private readonly sesion: SesionPje) {}
+  constructor(private readonly sesion: SesionDescargable) {}
 
   /**
    * Descarga un documento y devuelve la ruta final del fichero.
@@ -183,8 +199,30 @@ export class ServicioDescarga {
     // `nombreSeguro` convierte los dos puntos de `sigilo:` en `_`, que Windows sí
     // admite en un nombre de fichero.
     const prefijo = proceso.numeroProcesso ?? proceso.claveUnica;
-    const base = ServicioDescarga.nombreSeguro(prefijo, documento.id ?? '', documento.titulo);
+    const base = ServicioDescarga.nombreSeguro(prefijo, ServicioDescarga.discriminante(documento), documento.titulo);
     return path.join(CONFIG.pdfDir, `${base}.pdf`);
+  }
+
+  /**
+   * Qué distingue a este documento de otro del mismo proceso con el mismo título.
+   *
+   * El `id` del portal cuando lo publica. Cuando NO lo publica hay que sustituirlo
+   * por algo, y no por la cadena vacía: la ficha del PJe repite «Petição»,
+   * «Certidão» o «Despacho» tantas veces como movimientos haya, así que dos
+   * documentos distintos sin id producían la MISMA ruta. El segundo encontraba el
+   * fichero del primero ya en disco, se daba por descargado y se perdía en
+   * silencio —sin error, sin entrada en `failed.json` y con el proceso marcado
+   * como completado—.
+   *
+   * El sustituto es la fecha, si la hay, más un resumen corto del descriptor de
+   * descarga. Ese descriptor es la identidad real del documento (la URL, o el
+   * control y los parámetros del postback), es estable entre ejecuciones y es lo
+   * mismo que ya usa `claveDocumento` en `ficha.ts` para no fundirlos.
+   */
+  private static discriminante(documento: DocumentoProceso): string {
+    if (documento.id) return documento.id;
+    const huella = createHash('sha1').update(JSON.stringify(documento.descarga ?? '')).digest('hex').slice(0, 8);
+    return [documento.fecha?.slice(0, 10) ?? '', huella].filter(Boolean).join('_');
   }
 
   private async pedir(descarga: DescargaDirecta | DescargaPostback): Promise<AxiosResponse<Buffer>> {

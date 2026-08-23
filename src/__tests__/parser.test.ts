@@ -248,3 +248,107 @@ describe('detectarTotalResultados', () => {
     expect(detectarTotalResultados($)).toBeUndefined();
   });
 });
+
+// ----------------------------------------------- segredo de justiça
+
+describe('filas sin número CNJ (segredo de justiça)', () => {
+  beforeEach(() => {
+    // El descarte de la tercera fila avisa por consola; se silencia sin perder
+    // la posibilidad de comprobarlo.
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  it('rescata la fila sin número en vez de descartarla', () => {
+    // Es la corrección de una pérdida silenciosa medida en la única captura real
+    // comparable: en el fixture del TRF1, 8 de cada 30 filas no publican número.
+    // Descartarlas tiraba el 27 % de la página contra un enunciado que pide
+    // extraer toda la información disponible.
+    const procesos = parsearProcesos(cargar('resultados-sigilo.html'), 1);
+
+    expect(procesos).toHaveLength(2);
+    expect(procesos.map((p) => p.claveUnica)).toEqual([
+      '0000001-11.2024.4.05.8300',
+      'sigilo:3333cccc4444dddd',
+    ]);
+  });
+
+  it('marca la fila rescatada y NO le inventa un número de proceso', () => {
+    const [, enSigilo] = parsearProcesos(cargar('resultados-sigilo.html'), 1);
+
+    expect(enSigilo.enSigilo).toBe(true);
+    // La clave es un índice del scraper; el número es un dato del tribunal. Si el
+    // portal no lo publica, el campo se omite en lugar de rellenarse con la clave.
+    expect(enSigilo.numeroProcesso).toBeUndefined();
+    expect(enSigilo.claveUnica.startsWith('sigilo:')).toBe(true);
+  });
+
+  it('de la fila rescatada se extrae todo lo demás que el portal sí publica', () => {
+    const [, enSigilo] = parsearProcesos(cargar('resultados-sigilo.html'), 1);
+
+    expect(enSigilo.classeJudicial).toBe('PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL');
+    expect(enSigilo.orgaoJulgador).toBe('1ª Vara Federal');
+    expect(enSigilo.apertura).toEqual({
+      tipo: 'url',
+      url: '/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=3333cccc4444dddd',
+    });
+  });
+
+  it('descarta con AVISO la fila que no tiene ni número ni enlace', () => {
+    // Sin ninguna de las dos cosas no hay clave con la que deduplicarla, así que
+    // guardarla produciría duplicados en cada pasada. Pero el descarte se dice.
+    const aviso = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    parsearProcesos(cargar('resultados-sigilo.html'), 1);
+
+    const lineas = aviso.mock.calls.map((c) => String(c[0]));
+    expect(lineas.some((l) => /1 fila\(s\) sin número CNJ ni enlace/.test(l))).toBe(true);
+  });
+
+  it('una página ENTERA de expedientes en sigilo no aborta la extracción', () => {
+    // Con el criterio anterior —«ninguna fila trae número» ⇒ estructura rota— una
+    // página legítima de expedientes en segredo de justiça lanzaba
+    // EstructuraInesperadaError y detenía el recorrido.
+    const $ = cheerio.load(
+      '<table class="rich-table" id="f:lista">' +
+        '<thead><tr><th>Processo</th><th>Classe Judicial</th><th>Órgão Julgador</th></tr></thead>' +
+        '<tbody id="f:lista:tb">' +
+        '<tr class="rich-table-row"><td><a href="/x/listView.seam?ca=aaaa1111">PJEC - Segredo</a></td><td>CLASE A</td><td>Vara 1</td></tr>' +
+        '<tr class="rich-table-row"><td><a href="/x/listView.seam?ca=bbbb2222">PJEC - Segredo</a></td><td>CLASE B</td><td>Vara 2</td></tr>' +
+        '</tbody></table>',
+    );
+
+    const procesos = parsearProcesos($, 1);
+
+    expect(procesos).toHaveLength(2);
+    expect(procesos.every((p) => p.enSigilo === true)).toBe(true);
+    expect(procesos.map((p) => p.claveUnica)).toEqual(['sigilo:aaaa1111', 'sigilo:bbbb2222']);
+  });
+
+  it('SIN cabeceras y sin ningún número sigue lanzando: el modo posicional no adivina', () => {
+    // Límite deliberado, no un olvido. El mapeo posicional solo es fiable con su
+    // aserción ancla —alguna columna con formato CNJ—; sin cabeceras Y sin número
+    // no hay forma de saber qué columna es la clase y cuál el órgano, y adivinar
+    // produciría registros con los campos cruzados que nadie detectaría.
+    const $ = cheerio.load(
+      '<table class="rich-table" id="f:lista"><tbody id="f:lista:tb">' +
+        '<tr class="rich-table-row"><td><a href="/x/listView.seam?ca=aaaa1111">PJEC - Segredo</a></td><td>CLASE A</td><td>Vara 1</td></tr>' +
+        '<tr class="rich-table-row"><td><a href="/x/listView.seam?ca=bbbb2222">PJEC - Segredo</a></td><td>CLASE B</td><td>Vara 2</td></tr>' +
+        '</tbody></table>',
+    );
+
+    expect(() => parsearProcesos($, 1)).toThrow(EstructuraInesperadaError);
+  });
+
+  it('sigue lanzando cuando la tabla no publica NI número NI enlace', () => {
+    // El fallo ruidoso no se ha ablandado: solo se ha corregido su criterio.
+    const $ = cheerio.load(
+      '<table class="rich-table" id="f:lista"><tbody id="f:lista:tb">' +
+        '<tr class="rich-table-row"><td>texto</td><td>que no</td><td>se reconoce</td></tr>' +
+        '<tr class="rich-table-row"><td>otra</td><td>fila</td><td>ilegible</td></tr>' +
+        '</tbody></table>',
+    );
+
+    expect(() => parsearProcesos($, 1)).toThrow(EstructuraInesperadaError);
+  });
+});

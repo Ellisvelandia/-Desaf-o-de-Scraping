@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Respuesta parcial cuando la sesión ya no vale: JSF responde <redirect> en vez
+  de <changes>. Aplicarla como si fuera una actualización dejaría el documento
+  vigente intacto y el scraper repaginaría sobre la misma página creyendo avanzar.
+-->
+<partial-response id="j_id1">
+  <redirect url="/jurisprudenciaweb/faces/page/inicio.xhtml"></redirect>
+</partial-response>

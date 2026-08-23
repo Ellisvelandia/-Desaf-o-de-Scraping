@@ -1,7 +1,7 @@
 {
   "name": "desafio-scraping-pje-trf5",
-  "version": "1.0.0",
-  "description": "Scraper en TypeScript para la Consulta Pública del PJe TRF5 (Brasil): navegación JSF/Seam, extracción de metadatos, descarga de PDF y manejo de 429 con backoff exponencial.",
+  "version": "1.1.0",
+  "description": "Scraper en TypeScript para los dos portales judiciales que nombra el enunciado: la Consulta Pública del PJe TRF5 (Brasil) y la Jurisprudencia Nacional Sistematizada del Poder Judicial del Perú. Navegación JSF, extracción de metadatos, descarga de PDF y manejo de 429 con backoff exponencial, sin automatización de navegador.",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -9,6 +9,9 @@
     "fase1": "ts-node src/index.ts fase1",
     "fase2": "ts-node src/index.ts fase2",
     "completo": "ts-node src/index.ts completo",
+    "peru": "ts-node src/index.ts peru completo",
+    "peru:fase1": "ts-node src/index.ts peru fase1",
+    "peru:fase2": "ts-node src/index.ts peru fase2",
     "explorar": "ts-node src/explorar.ts",
     "build": "tsc",
     "test": "jest",

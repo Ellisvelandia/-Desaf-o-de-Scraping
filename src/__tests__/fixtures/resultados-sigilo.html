@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head><title>Consulta Publica - expedientes en segredo de justica (fixture sintetico)</title></head>
+<body>
+<!--
+  Fixture SINTETICO de la plantilla ANTIGUA, la del objetivo del enunciado, cuya
+  tabla de resultados sigue sin capturarse porque su CAPTCHA de imagen la
+  bloquea. Reproduce los marcadores que RichFaces 3.3 genera siempre.
+
+  Lo que ejerce es el caso medido en la unica captura real comparable (TRF1):
+  parte de las filas NO publican numero CNJ porque el expediente esta en segredo
+  de justica. Alli eran 8 de cada 30 —el 27 % de la pagina—, y este parser las
+  descartaba en silencio.
+
+    - fila 1: numero CNJ + enlace a la ficha  -> registro normal
+    - fila 2: SIN numero, con enlace `ca=`     -> se rescata, `enSigilo: true`,
+                                                  clave derivada del `ca=`
+    - fila 3: SIN numero y SIN enlace utilizable -> no hay clave posible; se
+                                                  descarta, pero con aviso
+-->
+<form id="consultaPublicaForm" action="/pjeconsulta/ConsultaPublica/listView.seam">
+<table class="rich-table" id="consultaPublicaForm:consultaPublicaList">
+  <thead class="rich-table-thead">
+    <tr class="rich-table-subheader">
+      <th class="rich-table-subheadercell">Processo</th>
+      <th class="rich-table-subheadercell">Classe Judicial</th>
+      <th class="rich-table-subheadercell">&Oacute;rg&atilde;o Julgador</th>
+    </tr>
+  </thead>
+  <tbody id="consultaPublicaForm:consultaPublicaList:tb">
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">
+        <a href="/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=1111aaaa2222bbbb">0000001-11.2024.4.05.8300</a>
+      </td>
+      <td class="rich-table-cell">PROCEDIMENTO COMUM C&Iacute;VEL</td>
+      <td class="rich-table-cell">3&ordf; Vara Federal</td>
+    </tr>
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">
+        <a href="/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=3333cccc4444dddd">PJEC - Segredo de Justi&ccedil;a</a>
+      </td>
+      <td class="rich-table-cell">PROCEDIMENTO DO JUIZADO ESPECIAL C&Iacute;VEL</td>
+      <td class="rich-table-cell">1&ordf; Vara Federal</td>
+    </tr>
+    <tr class="rich-table-row">
+      <td class="rich-table-cell">PJEC - Sem identificador</td>
+      <td class="rich-table-cell">EXECU&Ccedil;&Atilde;O FISCAL</td>
+      <td class="rich-table-cell">2&ordf; Vara Federal</td>
+    </tr>
+  </tbody>
+</table>
+</form>
+</body>
+</html>

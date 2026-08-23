@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head><title>rich:datascroller de RichFaces 3.3 (fixture sintetico)</title></head>
+<body>
+<!--
+  Paginador clasico de RichFaces 3.3, como el que sirve la variante «seam» del
+  PJe. Reproduce las tres cosas de las que depende `paginacion.ts`:
+
+    1. La ventana deslizante: estando en la pagina 3 el scroller dibuja «1 2 3 4 5»
+       aunque haya 40 paginas. Por eso `ultimaPagina` es un MINIMO y no el total.
+    2. La celda activa `rich-datascr-act`, que no lleva onclick (ya estas en ella).
+    3. Los botones simbolicos, cuyo parametro NO es un numero de pagina sino
+       'first' / 'next' / 'last'. Tomarlos por numeros dejaria la extraccion
+       girando sobre la misma pagina.
+
+  El `onclick` del primer boton lleva ademas `oncomplete` DELANTE de
+  `parameters`, que es como lo emite RichFaces cuando el componente declara un
+  manejador: el analizador no puede asumir que `parameters` sea la primera clave
+  del objeto de opciones.
+-->
+<form id="consultaPublicaForm" name="consultaPublicaForm" action="/pjeconsulta/ConsultaPublica/listView.seam">
+  <input type="hidden" name="javax.faces.ViewState" value="j_id7" />
+
+  <div class="rich-dtascroller" id="consultaPublicaForm:scroller">
+    <table class="rich-dtascroller-table">
+      <tbody>
+        <tr>
+          <td class="rich-datascr-button"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'oncomplete':function(request,event,data){},'parameters':{'consultaPublicaForm:scroller':'first','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">&laquo;&laquo;</td>
+          <td class="rich-datascr-inact"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'parameters':{'consultaPublicaForm:scroller':'1','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">1</td>
+          <td class="rich-datascr-inact"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'parameters':{'consultaPublicaForm:scroller':'2','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">2</td>
+          <td class="rich-datascr-act">3</td>
+          <td class="rich-datascr-inact"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'parameters':{'consultaPublicaForm:scroller':'4','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">4</td>
+          <td class="rich-datascr-inact"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'parameters':{'consultaPublicaForm:scroller':'5','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">5</td>
+          <td class="rich-datascr-button"
+              onclick="A4J.AJAX.Submit('consultaPublicaForm',event,{'parameters':{'consultaPublicaForm:scroller':'next','ajaxSingle':'consultaPublicaForm:scroller'} ,'actionUrl':'/pjeconsulta/ConsultaPublica/listView.seam'} )">&raquo;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</form>
+</body>
+</html>

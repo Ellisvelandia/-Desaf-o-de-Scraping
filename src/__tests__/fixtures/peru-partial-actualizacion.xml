@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Respuesta parcial de JSF 2 al saltar de página en el portal peruano.
+  Estructura estándar de Mojarra: <changes> con un <update> por componente
+  re-renderizado y otro con el ViewState nuevo. El HTML viaja dentro de CDATA,
+  que es justo lo que obliga a parsear la envoltura en modo XML.
+-->
+<partial-response id="j_id1">
+  <changes>
+    <update id="formBuscador:data1"><![CDATA[<div id="formBuscador:data1"><span class="rf-ds"><a class="rf-ds-nmb-btn" href="#">1</a><span class="rf-ds-nmb-btn rf-ds-act">2</span><a class="rf-ds-nmb-btn" href="#">3</a></span></div>]]></update>
+    <update id="javax.faces.ViewState"><![CDATA[VIEWSTATE-NUEVO-TRAS-SALTAR]]></update>
+  </changes>
+</partial-response>

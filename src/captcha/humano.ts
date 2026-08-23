@@ -77,12 +77,39 @@ export class CaptchaFijo implements ResolutorCaptcha {
   }
 }
 
+/**
+ * Pregunta por la terminal, fallando de forma explícita si no hay nadie.
+ *
+ * El manejador de `close` no es decorativo. Con la entrada estándar cerrada
+ * —`npm run fase1 < /dev/null`, nohup, cron, un runner de CI, cualquier
+ * orquestador sin TTY— el callback de `question` no se invoca nunca. Sin este
+ * guardia la promesa se quedaba pendiente para siempre: Node vaciaba el bucle de
+ * eventos y **el proceso terminaba con código 0**, sin descargar nada y sin decir
+ * por qué. Un fallo silencioso con aspecto de éxito, que es el peor que puede
+ * dar este scraper.
+ *
+ * `respondido` distingue el cierre tras una respuesta del cierre sin ella:
+ * `rl.close()` emite `close` de forma síncrona, así que sin la bandera el
+ * rechazo pisaría a la respuesta legítima.
+ */
 function preguntar(prompt: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) =>
+  return new Promise((resolve, reject) => {
+    let respondido = false;
+    rl.on('close', () => {
+      if (respondido) return;
+      reject(
+        new Error(
+          'La entrada estándar se cerró sin responder al CAPTCHA. Este portal exige una persona: ' +
+            'ejecuta el scraper en una terminal interactiva, o usa CAPTCHA_MODE=file para que la ' +
+            'respuesta llegue por output/captcha.txt.',
+        ),
+      );
+    });
     rl.question(prompt, (r) => {
+      respondido = true;
       rl.close();
       resolve(r);
-    }),
-  );
+    });
+  });
 }

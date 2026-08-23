@@ -22,6 +22,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import { desescaparJs } from './ficha';
 
 /** Cuál de las dos plantillas de consulta pública sirve el portal. */
 export type VariantePje = 'seam' | 'fpp';
@@ -192,14 +193,28 @@ function describirFormularios($: cheerio.CheerioAPI): string {
  * panel y no ejecuta la consulta.
  */
 export function localizarControlBusqueda($: cheerio.CheerioAPI, formId: string): string | undefined {
-  const guiones = /\x2D/g; // el portal escapa los guiones dentro del JS
+  // El desescapado lo hace `desescaparJs`, el mismo que ya usa `ficha.ts`, y no un
+  // `replace` a mano. Aquí había uno que no desescapaba nada: dentro de una
+  // expresión regular, `/\x2D/g` ES el propio carácter `-`, así que sustituía
+  // guiones por guiones. Lo que RichFaces escribe en el JavaScript es el texto
+  // LITERAL de cuatro caracteres `\x2D`, y con el no-op un id como
+  // `fPP:j\x2Did244` viajaba crudo en el POST. JSF no reconoce ese control y
+  // responde con una actualización A4J vacía: ningún error, ninguna tabla.
   for (const el of $('script').toArray()) {
     const js = $(el).text();
     if (!js.includes('executarPesquisa')) continue;
+
     const m = /executarPesquisa\s*=\s*function[\s\S]*?'parameters'\s*:\s*\{\s*'([^']+)'/.exec(js);
-    if (m && m[1].startsWith(`${formId}:`)) return m[1].replace(guiones, '-');
+    if (m) {
+      const id = desescaparJs(m[1]);
+      if (id.startsWith(`${formId}:`)) return id;
+    }
+
     const sim = /executarPesquisa\s*=\s*function[\s\S]*?'similarityGroupingId'\s*:\s*'([^']+)'/.exec(js);
-    if (sim && sim[1].startsWith(`${formId}:`)) return sim[1].replace(guiones, '-');
+    if (sim) {
+      const id = desescaparJs(sim[1]);
+      if (id.startsWith(`${formId}:`)) return id;
+    }
   }
   return undefined;
 }

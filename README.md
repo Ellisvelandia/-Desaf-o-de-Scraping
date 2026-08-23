@@ -1,6 +1,19 @@
-# Scraper · Consulta Pública del PJe TRF5
+# Scraper · Dos portales judiciales, un solo scraper
 
-Scraper en TypeScript que recorre la Consulta Pública del Processo Judicial Eletrônico (PJe) del Tribunal Regional Federal da 5ª Região (`https://pje.trf5.jus.br/pjeconsulta/ConsultaPublica/listView.seam`), extrae los metadatos de cada proceso listado y descarga los PDF asociados. Trabaja solo con HTTP (axios + cheerio) replicando el protocolo Ajax4jsf de la aplicación JBoss Seam 2 / JSF 1.2 / RichFaces 3.3 que hay detrás, sin ninguna automatización de navegador.
+Scraper en TypeScript, solo HTTP (axios + cheerio) y **sin ninguna automatización de navegador**, que recorre los **dos** portales que nombra el enunciado del desafío, extrae los metadatos de cada documento y descarga sus PDF.
+
+| Objetivo | Portal | Tecnología | CAPTCHA | Comando |
+|---|---|---|---|---|
+| `peru` | [Jurisprudencia Nacional Sistematizada](https://jurisprudencia.pj.gob.pe/jurisprudenciaweb/faces/page/resultado.xhtml) (Poder Judicial del Perú) | JSF 2 + RichFaces 4 | **No** | `npm run peru` |
+| `trf5` | [Consulta Pública del PJe](https://pje.trf5.jus.br/pjeconsulta/ConsultaPublica/listView.seam) (Tribunal Regional Federal da 5ª Região, Brasil) | JBoss Seam 2 / JSF 1.2 / RichFaces 3.3 | Sí, de imagen | `npm start` |
+
+### Por qué hay dos objetivos y no uno
+
+Porque **el enunciado nombra dos sitios distintos y no dice cuál manda**. Bajo el epígrafe «Sitio web a scrapear» aparece el PJe del TRF5; pero tanto el «Paso 1: Explorar el sitio web» como el **Entregable** dicen literalmente *«Asegúrate de que funcione correctamente con el sitio»* y ahí el sitio es `jurisprudencia.pj.gob.pe`.
+
+Implementar los dos es la única lectura que cumple el enunciado entero en vez de apostar por una mitad. Y resulta que se complementan: el TRF5 exige un CAPTCHA de imagen que impide una ejecución desatendida, mientras que **el portal peruano no pide CAPTCHA**, publica **15.247 páginas** de resultados y cuelga el PDF de cada resolución como un enlace directo. Es el objetivo que sí puede demostrar el requisito «navegar por todas las páginas» de principio a fin.
+
+El código común —cliente HTTP, política de reintentos, persistencia, exportación CSV, servicio de descarga— es exactamente el mismo para ambos. Lo que cambia por objetivo es el parser, la sesión y el dialecto AJAX de JSF.
 
 ---
 
@@ -10,12 +23,27 @@ Scraper en TypeScript que recorre la Consulta Pública del Processo Judicial Ele
 |---|---|
 | Node.js | 18 o superior (declarado en `engines` de `package.json`) |
 | npm | El que acompañe a esa versión de Node |
-| Red | Salida directa a Internet, **sin VPN ni proxy de alojamiento** |
-| Persona disponible | El portal exige un CAPTCHA; hay que teclearlo una vez por fase |
+| Red (`trf5`) | Salida directa a Internet, **sin VPN ni proxy de alojamiento** |
+| Red (`peru`) | **Salida desde Perú**: el portal responde `403` a cualquier otra IP. Ver el aviso de abajo. |
+| Persona disponible | Solo para `trf5`: su CAPTCHA hay que teclearlo una vez por fase. El objetivo `peru` es desatendido. |
 
-### Aviso: ejecutar SIN VPN
+### Aviso: el objetivo `peru` exige salir desde Perú, con VPN **de sistema**
 
-**Este es el error número uno con el que se topa quien ejecuta el scraper por primera vez.**
+`jurisprudencia.pj.gob.pe` está detrás de un WAF Radware que responde `403 Forbidden` —con un «Transaction ID» y nada más— a toda petición que no llegue desde Perú. Comprobado: falla igual desde una IP europea, desde una IP colombiana y desde un proxy comercial geolocalizado en Lima.
+
+El detalle que cuesta una tarde: **una VPN de extensión de navegador no sirve**. Esas extensiones enrutan únicamente el tráfico de Chrome; el proceso de Node sigue saliendo por la IP real de la máquina y recibe el mismo `403`. Hace falta una VPN de **ámbito de sistema** (cliente de escritorio o la VPN de Windows), de modo que también salga por ella el proceso que lanza `npm run peru`.
+
+Para comprobarlo antes de lanzar nada:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://jurisprudencia.pj.gob.pe/jurisprudenciaweb/faces/page/inicio.xhtml
+```
+
+`200` significa que Node llegará al portal. `403` significa que la VPN no está cubriendo a Node, por mucho que el sitio se vea bien en el navegador.
+
+### Aviso: el objetivo `trf5` exige ejecutar SIN VPN
+
+**El consejo es el OPUESTO al del portal peruano, y darlo al revés cuesta una tarde.** El punto de entrada emite el correcto según el objetivo activo.
 
 El TRF5 está detrás de un WAF F5 que rechaza los rangos de VPN y de proveedores de alojamiento. Cuando la IP de origen cae en uno de esos rangos, el portal responde `HTTP 200` con una página de bloqueo titulada **«Requisição Rejeitada»** en lugar del formulario. No es un fallo del scraper y no se arregla reintentando: el bloqueo es por dirección IP.
 
@@ -41,9 +69,14 @@ No hay paso de compilación obligatorio: los comandos de uso corren el TypeScrip
 
 ### Comandos
 
+Los comandos sin prefijo apuntan al objetivo `trf5`; los `peru:*`, al peruano.
+
 | Comando | Qué hace |
 |---|---|
-| `npm start` | Menú interactivo (1 = Fase 1, 2 = Fase 2, 3 = flujo completo) |
+| `npm run peru` | **Objetivo peruano, flujo completo y desatendido**: recorre el paginador, extrae y descarga los PDF |
+| `npm run peru:fase1` | Solo extracción de metadatos del portal peruano |
+| `npm run peru:fase2` | Solo descarga de los PDF ya indexados del portal peruano |
+| `npm start` | Menú interactivo del TRF5 (1 = Fase 1, 2 = Fase 2, 3 = flujo completo) |
 | `npm run fase1` | Solo Fase 1: recorre el paginador y extrae metadatos a `records.json` / `records.csv` |
 | `npm run fase2` | Solo Fase 2: descarga los PDF de los procesos ya indexados por la Fase 1 |
 | `npm run completo` | Fase 1 seguida de Fase 2 en la misma ejecución |
@@ -54,15 +87,36 @@ No hay paso de compilación obligatorio: los comandos de uso corren el TypeScrip
 
 ### Variables de entorno
 
+#### Comunes a los dos objetivos
+
+| Variable | Por defecto | Efecto |
+|---|---|---|
+| `TARGET` | `trf5` | Objetivo activo: `peru` o `trf5`. Equivale a pasarlo como primer argumento (`ts-node src/index.ts peru fase1`). |
+| `PJE_BASE_URL` | Según el objetivo | Origen del portal. El PJe es el mismo software desplegado en decenas de tribunales, así que apuntar a otra instancia es cambiar esta variable, no tocar código. Con ella se hizo la ejecución de demostración contra `https://pje2g.trf5.jus.br`. |
+| `PJE_LANDING_PATH` | Según el objetivo | Ruta de la página de entrada, para instancias que la sirvan en otro contexto web (`/consultapublica` en vez de `/pjeconsulta`, por ejemplo). |
+| `PJE_RESULTADO_PATH` | Según el objetivo | Ruta que atiende los POST de paginación. |
+| `MAX_DESCARGAS` | `25` | Tope de PDF por ejecución de la Fase 2. El enunciado no exige bajarlos todos. |
+| `MAX_PAGINAS` | `10000` | Tope de páginas de la Fase 1. Red de seguridad ante un paginador que no termine. |
+| `DEBUG` | (sin valor) | Con cualquier valor, traza cada petición HTTP (método, URL, código, bytes) y el detalle de cada respuesta AJAX. |
+
+#### Solo del objetivo `peru`
+
+Los tres son opcionales: el buscador peruano acepta una consulta **sin filtros** y devuelve el corpus entero, que es el caso que demuestra «navegar por todas las páginas».
+
+| Variable | Efecto |
+|---|---|
+| `TEXTO` | Búsqueda por texto libre (`TEXTO=amparo`). |
+| `EXPEDIENTE` | Nº de expediente exacto (`EXPEDIENTE=037233-2025`). |
+| `ANIO` | Año de la resolución. |
+
+#### Solo del objetivo `trf5`
+
 | Variable | Por defecto | Efecto |
 |---|---|---|
 | `SECAO` | `0` | Valor del selector Seção/Subseção. `0` es «TRF - 5ª Região», la opción más amplia del desplegable. El portal exige al menos un criterio de búsqueda, y este es el que se envía siempre. |
 | `NOME_PARTE` | (sin valor) | Criterio adicional por nombre de parte. Útil para acotar el conjunto de prueba. |
 | `NUMERO_PROCESSO` | (sin valor) | Criterio por número CNJ concreto. Sin él se envía la máscara vacía `_______-__.____._.__.____`, que es lo que manda el navegador. |
-| `MAX_DESCARGAS` | `25` | Tope de PDF por ejecución de la Fase 2. El enunciado no exige bajarlos todos. |
-| `MAX_PAGINAS` | `10000` | Tope de páginas de la Fase 1. Red de seguridad ante un paginador que no termine. |
 | `CAPTCHA_MODE` | (terminal) | Con el valor `file`, la respuesta del CAPTCHA se lee de `output/captcha.txt` en vez de la terminal. |
-| `DEBUG` | (sin valor) | Con cualquier valor, traza cada petición HTTP (método, URL, código, bytes) y el detalle de cada respuesta A4J. |
 | `GUARDAR_RAW` | (sin valor) | Con cualquier valor, guarda las respuestas crudas del portal en `output/raw/`. `npm run explorar` lo activa por su cuenta. |
 
 Ejemplo:
@@ -210,15 +264,21 @@ src/
 ├── http/
 │   └── client.ts         ClienteHttp: cookies, ISO-8859-1, pausa mínima, errores disfrazados de 200
 ├── jsf/
-│   ├── form.ts           extraerFormulario, fijarCampo, buscarCampo
-│   └── a4j.ts            construirCuerpoA4J, aplicarRespuestaA4J
+│   ├── form.ts           extraerFormulario, fijarCampo, buscarCampo (común a los dos objetivos)
+│   ├── a4j.ts            RichFaces 3.3 sobre JSF 1.2 (TRF5): construirCuerpoA4J, aplicarRespuestaA4J
+│   └── partial.ts        JSF 2 estándar (Perú): construirCuerpoParcial, aplicarRespuestaParcial,
+│                         esRespuestaParcial. Son dos protocolos distintos, no dos formas del mismo
+├── peru/                 Objetivo peruano. Solo lo que difiere; todo lo demás se reutiliza
+│   ├── session.ts        SesionPeru: abrir, buscar (descubre el control JSF del onclick), irAPagina
+│   ├── parser.ts         parsearResoluciones, detectarTotalPaginas, detectarPaginaActual
+│   └── scraper.ts        ScraperPeru: fase1 (metadatos) y fase2 (PDF), sin CAPTCHA
 ├── captcha/
 │   └── humano.ts         CaptchaHumano (terminal), CaptchaPorArchivo (fichero), CaptchaFijo (pruebas)
 ├── utils/
 │   ├── logger.ts         log.info / warn / error / debug con marca de tiempo relativa
 │   └── retry.ts          withRetry, sleep, esReintentable, calcularEspera,
 │                         ServidorSaturadoError, SesionCaducadaError, BloqueadoPorWafError
-└── __tests__/            Suite de Jest (6 ficheros, 149 pruebas, sin red)
+└── __tests__/            Suite de Jest (9 ficheros, sin red)
     └── fixtures/         Capturas REALES: portal-inicio.html (variante antigua, JSESSIONID
                           redactado), pje-nuevo-resultados.html y -trf1.html (listas de dos
                           instancias) y pje-nuevo-ficha.html. Más fixtures sintéticos de
@@ -228,8 +288,11 @@ tsconfig.json            Configuración de compilación (excluye las pruebas de 
 tsconfig.test.json       La misma en modo noEmit, incluyendo las pruebas, para `npm run lint`
 
 docs/
-├── protocol.md           Nota de protocolo: sesión, ViewState, cuerpo exacto del POST A4J,
+├── protocol.md           Protocolo del TRF5: sesión, ViewState, cuerpo exacto del POST A4J,
 │                         tabla de señales de fallo, lo verificado y lo pendiente
+├── protocolo-peru.md     Protocolo del portal peruano, capturado del sitio en vivo: bloqueo
+│                         geográfico, POST de búsqueda, estructura del resultado, endpoint de
+│                         descarga y petición parcial de paginación, con lo verificado y lo no
 ├── scope.md              Alcance, carácter público de la fuente y autorización
 └── arquitectura.md       Decisiones de diseño y flujo de datos
 ```
@@ -246,7 +309,7 @@ Todo se escribe bajo `output/`, que está en `.gitignore` porque contiene datos 
 | `output/records.csv` | Las columnas estables del contrato, con BOM UTF-8 y CRLF para que Excel en Windows no destroce los acentos. Los documentos van como recuento; el detalle está en el JSON. |
 | `output/state.json` | Estado de reanudación: criterio de búsqueda, última página completada, si la extracción terminó y el total anunciado por el portal. |
 | `output/failed.json` | Los fallos, con clave (`claveUnica`, fase), motivo, número de intentos y marca del último. |
-| `output/pdfs/` | Los PDF descargados, nombrados `<numeroCNJ>_<idDocumento>_<titulo>.pdf`, o `sigilo_<hash>_<idDocumento>_<titulo>.pdf` cuando el proceso corre en segredo de justiça y no tiene número. |
+| `output/pdfs/` | Los PDF descargados, nombrados `<numeroCNJ>_<idDocumento>_<titulo>.pdf`, o `sigilo_<hash>_<idDocumento>_<titulo>.pdf` cuando el proceso corre en segredo de justiça y no tiene número. Cuando el documento no publica `id`, su lugar lo ocupa la fecha más un resumen corto de su enlace: sin ese discriminante, dos documentos homónimos del mismo proceso compartían ruta y el segundo se perdía en silencio. |
 | `output/captcha.png` | La última imagen de CAPTCHA servida. Es de trabajo, no de resultado. |
 | `output/raw/` | Respuestas crudas del portal, solo cuando `GUARDAR_RAW` está activo. |
 
@@ -341,9 +404,10 @@ Compatibilidad: un `records.json` escrito por una versión anterior (indexado po
 | `400`, `401`, `403`, `404`, `405`, `410`, `422` | La petición está mal o no estamos autorizados. | **Nunca se reintentan.** Se propagan en el primer intento, sin dormir: insistir contra un WAF convierte un bloqueo blando en uno duro. |
 | Respuesta A4J sin `Ajax-Update-Ids`, o `<meta name="Location">` que no apunta a `errorUnexpected` | La sesión JSF o el `ViewState` caducaron. | `SesionCaducadaError`. No se reintenta la petición: hay que reabrir sesión, lo que implica un CAPTCHA nuevo. |
 | `200` con `Content-Type: text/html` en una descarga, fichero < 1 KB, o bytes iniciales distintos de `%PDF-` | El portal sirvió una página de error en lugar del documento. | `DescargaInvalidaError`, clasificado como fatal a propósito: repetir no convierte una página de sesión caducada en un PDF. El `.part` se borra, el fallo se anota en `failed.json` y se sigue. |
-| Tabla de RichFaces con filas pero sin ningún número CNJ | La estructura de la tabla de resultados cambió. | `EstructuraInesperadaError` con una muestra de la primera fila. Se anota como fallo de fase `pagina` y se corta la Fase 1, en lugar de escribir registros a medias. |
+| `403` cuyo cuerpo es solo «403 Forbidden» y un «Transaction ID» | Bloqueo geográfico del WAF Radware del portal peruano: la petición no salió desde Perú. | `BloqueadoPorWafError`, fatal a propósito. El mensaje final dice lo único que resuelve el caso: hace falta una VPN de **ámbito de sistema**, porque una extensión de navegador no enruta el proceso de Node. |
+| Tabla de RichFaces con filas pero sin ningún número CNJ **ni enlace a la ficha** | La estructura de la tabla de resultados cambió. Con número o con enlace la fila se extrae; sin ninguno de los dos no hay clave posible. | `EstructuraInesperadaError` con una muestra de la primera fila. Se anota como fallo de fase `pagina` y se corta la Fase 1, en lugar de escribir registros a medias. |
 
-Qué queda registrado en `failed.json`: el scraper emite tres fases, `pagina` (una página que no se pudo parsear), `ficha` (un proceso cuya ficha no se pudo abrir, incluido el caso en que la fila no publica de forma inequívoca cómo abrirla) y `documento` (un PDF que no se pudo descargar). Cada entrada es única por (proceso, fase) y acumula `intentos` en vez de duplicarse, de modo que el contador sirve para decidir cuándo rendirse con ese documento en una pasada posterior.
+Qué queda registrado en `failed.json`: el scraper emite tres fases, `pagina` (una página que no se pudo parsear), `ficha` (un proceso cuya ficha no se pudo abrir, incluido el caso en que la fila no publica de forma inequívoca cómo abrirla) y `documento` (un PDF que no se pudo descargar). Cada entrada es única por (proceso, fase, **documento**) y acumula `intentos` en vez de duplicarse, de modo que el contador cuenta los intentos de ESE documento y sirve para decidir cuándo rendirse con él. Y el proceso al que pertenece queda en estado `parcial`, no `completado`, así que la pasada siguiente vuelve a intentarlo: sin eso, el registro del fallo era información que nadie podía usar.
 
 ---
 
@@ -354,7 +418,7 @@ npm test        # jest + ts-jest
 npm run lint    # tsc --noEmit, comprobación de tipos en modo estricto
 ```
 
-El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. Seis suites, **149 pruebas**, todas sin red:
+El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. **Nueve suites, todas sin red.** El recuento exacto lo da `npm test`; aquí no se repite un número que envejece con cada commit.
 
 | Suite | Qué fija |
 |---|---|
@@ -364,6 +428,9 @@ El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node
 | `persistencia.test.ts` | Deduplicación por `claveUnica` —incluida la de dos procesos en sigilo distintos, que NO se funden en uno—, migración de un `records.json` del formato anterior, escritura atómica sin `.tmp` huérfanos, degradación ante ficheros corruptos y formato del CSV. |
 | `descarga.test.ts` | Que el nombre de fichero sobreviva a lo que el portal escriba en un título, y que la ruta final solo aparezca si lo descargado es un PDF de verdad. |
 | `retry.test.ts` | El requisito 3 del enunciado: detección del `429`, retroceso exponencial con jitter y tope, `Retry-After`, y qué se propaga cuando ya no se puede seguir. |
+| `peru.test.ts` | El objetivo peruano: indexación por rótulo (no por posición), el total leído como **páginas** y no como registros, la clave derivada del `uuid` cuando falta el expediente, que «Ver Ficha» **no** se emita como URL porque es un postback, el descarte ruidoso de un panel sin clave, y el protocolo parcial de JSF 2 —CDATA, `<redirect>` y el rechazo de un id que el documento vigente no tiene—. |
+| `paginacion.test.ts` | El contrato de navegación, que antes no tenía ninguna prueba: lectura del `rich:datascroller` (id, formulario, página activa y ventana), que los valores simbólicos (`first`, `next`) no se confundan con números de página, que el `onclick` se analice aunque `parameters` no sea la primera clave, y que el control «pulsado» no sea el id del scroller —enviaría dos veces ese nombre y el datascroller recibiría un texto donde espera un número—. |
+| `reanudacion.test.ts` | Que reanudar exija el **mismo criterio de búsqueda**: la página 50 de una búsqueda no es la página 50 de otra. |
 
 Dos decisiones del arnés que conviene conocer:
 
@@ -374,12 +441,22 @@ Dos decisiones del arnés que conviene conocer:
 
 ## Limitaciones conocidas
 
+### Del objetivo `peru`
+
+**Solo se puede ejecutar desde Perú.** El WAF Radware responde `403` a todo lo demás. No es una limitación del scraper y no se arregla con reintentos: hay que salir por una IP peruana, y con una VPN de **ámbito de sistema**, no de extensión de navegador. Consecuencia práctica: **el recorrido completo no se ha ejecutado desde esta máquina**, porque no había ruta de red hacia el portal para el proceso de Node. Lo que sí está verificado en vivo, con el navegador saliendo por Perú, es el protocolo entero —el POST de búsqueda con sus parámetros, el POST parcial de paginación con `formBuscador:data1:page=N`, la estructura de los paneles de resultado y el endpoint `ServletDescarga?uuid=`, que devolvió un `503` en la primera petición—. El código reproduce ese protocolo; la ejecución de punta a punta la tiene que hacer quien disponga de la salida de red.
+
+**«Ver Ficha» no se sigue.** Se comprobó en el portal que ese botón es `href="#"` con un postback de RichFaces, no una URL navegable, así que el parser **no emite `apertura`** para él en lugar de fabricar un enlace que devolvería la misma página de resultados. No es una pérdida de información del enunciado: los rótulos que el panel de la lista publica —tipo de recurso, expediente, pretensión o delito, tipo y fecha de resolución, sala suprema, norma de derecho interno, sumilla y palabras clave— se extraen todos, y el PDF de la resolución cuelga de la propia lista. Lo que la ficha añada por encima de eso queda fuera.
+
+**Los fixtures del objetivo peruano son estructuralmente reales pero no un volcado literal.** Se reconstruyeron recorriendo el DOM del portal en vivo; los `uuid` van sustituidos por marcadores y no se incluye ningún `ViewState` de sesión real. La cabecera del fixture lo dice con esas mismas palabras.
+
+### Del objetivo `trf5`
+
 **El CAPTCHA exige una persona, una vez por fase.** No es automatizable sin evadir una detección de bots del titular del sitio, y no se va a hacer. Una ejecución desatendida de principio a fin no es posible; lo más cerca que se puede estar es `CAPTCHA_MODE=file`, que solo cambia por dónde llega la respuesta humana.
 
 **La fila de resultados está verificada en la variante moderna; en la del objetivo, no.** Aquí hay que separar dos cosas que antes se contaban como una sola:
 
 - **Variante moderna («fPP»): VERIFICADA contra tres capturas reales de tres instancias distintas** — `pje-nuevo-resultados.html` (TRF5 *treinamento*, contexto `/pjeconsulta`), `pje-nuevo-resultados-trf1.html` (TRF1, contexto `/consultapublica`) y `pje-nuevo-ficha.html` (una ficha completa). Están versionadas en `src/__tests__/fixtures/` y `src/__tests__/moderno.test.ts` corre contra ellas sin red. De ahí sale la estructura real: tres columnas, celda «Processo» compuesta (clase judicial + sigla + número CNJ + asunto + los dos polos), total en `<span class="text-muted">N resultados encontrados</span>` y ficha abierta por GET con `?ca=<hash>`. La captura del TRF1 no es una repetición: es la que demuestra que **no hay ids codificados a mano**, porque los sufijos `j_idNNN` de la misma vista cambian de un tribunal a otro (`j_id257` frente a `j_id259`).
-- **Variante antigua («seam»), que es la del objetivo — `pje.trf5.jus.br/pjeconsulta/`, 1.er grado: SIGUE SIN VERIFICAR, y el motivo es su CAPTCHA de imagen.** Ese CAPTCHA está validado en servidor y bloquea la lista de resultados, así que nunca se ha visto una fila real de esa instancia. Lo que hay para ella es hipótesis razonada: marcadores estructurales que RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`), indexación por cabecera con sinónimos tolerantes en vez de por posición, cada fila anclada al formato del número CNJ y todo lo no reconocido a `camposExtra`. Cuando encuentra una tabla que estructuralmente es la de resultados pero cuyo contenido ya no reconoce, **lanza `EstructuraInesperadaError` en lugar de devolver filas a medias**: si la suposición es incorrecta, la ejecución se detiene con un mensaje que incluye la primera fila, no produce datos silenciosamente equivocados.
+- **Variante antigua («seam»), que es la del objetivo — `pje.trf5.jus.br/pjeconsulta/`, 1.er grado: SIGUE SIN VERIFICAR, y el motivo es su CAPTCHA de imagen.** Ese CAPTCHA está validado en servidor y bloquea la lista de resultados, así que nunca se ha visto una fila real de esa instancia. Lo que hay para ella es hipótesis razonada: marcadores estructurales que RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`), indexación por cabecera con sinónimos tolerantes en vez de por posición, cada fila anclada al número CNJ **o, si el expediente corre en segredo de justiça y no lo publica, al `ca=` de su enlace a la ficha**, y todo lo no reconocido a `camposExtra`. Cuando encuentra una tabla que estructuralmente es la de resultados pero cuyo contenido ya no reconoce, **lanza `EstructuraInesperadaError` en lugar de devolver filas a medias**: si la suposición es incorrecta, la ejecución se detiene con un mensaje que incluye la primera fila, no produce datos silenciosamente equivocados.
 
 **Dato medido que no es un fallo, y el agujero que abrió:** en el fixture del TRF1, de sus 30 filas solo **22 publican número CNJ**; en las otras 8 el rótulo dice solo «PJEC - *Assunto*» y la columna de movimentación llega vacía. Son procesos en *segredo de justiça*.
 
@@ -402,26 +479,38 @@ En el fixture del TRF5 las 30 filas traen número y salen 30 procesos, ninguno e
 **El volumen total es desconocido.** No se ha llegado a ver cuántos registros publica la consulta ni cuántos caben por página. El scraper no depende de ese número —confirma el final con el paginador y con páginas vacías consecutivas—, pero tampoco puede anunciar un porcentaje de avance fiable.
 
 ---
-
 ## Cumplimiento del enunciado
 
-| Requisito del desafío | Dónde está resuelto |
-|---|---|
-| 1. Navegar todo el sitio y extraer la información de cada documento | `src/scraper.ts` (`fase1`) recorre el paginador; `src/paginacion.ts` lee el `rich:datascroller` del HTML vigente y construye cada salto; `src/parser.ts` (`parsearProcesos`) extrae número CNJ, órgano, clase, fecha, partes y todo lo demás a `camposExtra`, y lee de la fila el control que abre la ficha (`apertura`), delegando en `src/parserModerno.ts` cuando el documento trae la tabla de la variante moderna; `fase2` abre la ficha de cada proceso y `src/ficha.ts` (`parsearFicha`) extrae sus partes, sus documentos con enlace de descarga y los rótulos de «Dados do Processo». Verificado en la variante moderna; **no verificado** en la antigua, que es la del objetivo: ver **Limitaciones conocidas** |
-| 2. Descargar PDF con nombre descriptivo, en carpeta organizada | `src/descarga.ts`: `ServicioDescarga.rutaDestino` compone `<numeroCNJ>_<idDocumento>_<titulo>.pdf` bajo `output/pdfs/`; `nombreSeguro` sanea el texto del portal para el sistema de ficheros |
-| 2b. Basta demostrar que puede, sin bajarlos todos | `MAX_DESCARGAS` (por defecto 25) acota la Fase 2 en `src/index.ts` y `src/scraper.ts` |
-| 3. Detectar `429` y reintentar con retroceso exponencial | `src/utils/retry.ts`: `esReintentable` incluye `429` en `RETRYABLE`, `calcularEspera` aplica `base·2^(n-1)` con jitter y tope, y respeta `Retry-After` |
-| 3b. Continuar con el siguiente si el fallo persiste | `src/scraper.ts` (`fase2`): el `try/catch` por documento registra y sigue; el bucle no se rompe por un documento |
-| 3c. Registrar qué documentos fallaron | `src/persistencia.ts` (`registrarFallo`) → `output/failed.json`, con motivo, fase y contador de intentos |
-| 4. TypeScript, sin Puppeteer/Playwright/Selenium | `tsconfig.json` en modo `strict`; las únicas dependencias de ejecución son `axios`, `cheerio` e `iconv-lite`. No hay ninguna automatización de navegador |
-| 5. Código estructurado y documentado | Capas separadas (`http/`, `jsf/`, `captcha/`, `utils/` y los módulos de dominio); cada fichero abre con el porqué de su diseño; `docs/arquitectura.md` y `docs/protocol.md` |
-| 6. Repositorio con fuente, `package.json`, `README.md` y `.gitignore` | Los cuatro están en la raíz del repositorio |
-| Tip: delays entre peticiones | `CONFIG.delayBetweenRequestsMs` (2 s), impuesto por `ClienteHttp` en cada petición, y `CONFIG.delayBetweenDownloadsMs` (3 s) entre PDF |
-| Tip: retry inteligente | `withRetry` clasifica antes de reaccionar: fatales sin dormir, transitorios con retroceso, y una espera específica de 90 s para el pool agotado del TRF5 |
-| Tip: datos en formato estructurado | `output/records.json` (indexado por `claveUnica`) y `output/records.csv` (RFC 4180, BOM UTF-8) |
-| Tip: probar con un subconjunto | `NOME_PARTE`, `NUMERO_PROCESSO`, `MAX_PAGINAS` y `MAX_DESCARGAS` |
-| Tip: logging del progreso | `src/utils/logger.ts`, con una línea por página, descarga y reintento, y `DEBUG=1` para el detalle HTTP |
-| Tip: PDF en carpeta organizada | `output/pdfs/`, con el número de proceso como prefijo para que los documentos de un mismo expediente queden agrupados al ordenar |
+Cada fila dice **dónde** está resuelto y **con qué evidencia**. La columna de evidencia distingue tres cosas que no valen lo mismo, y distinguirlas es el punto de la tabla:
+
+- **En vivo** — ejercitado contra el portal real, con log en `docs/evidencia/`.
+- **Probado** — fijado por una prueba automática sin red.
+- **Sin verificar** — implementado y razonado, pero nunca ejercitado. Se dice, no se disimula.
+
+| Requisito del enunciado | Dónde está resuelto | Evidencia |
+|---|---|---|
+| **1. Navegar por todo el sitio** | `peru`: `src/peru/scraper.ts` recorre el paginador; `src/peru/session.ts` (`irAPagina`) envía la petición parcial de JSF 2 con `formBuscador:data1:page=N`. `trf5`: `src/paginacion.ts` + `src/scraper.ts`. | **Probado** (`paginacion.test.ts`, `peru.test.ts`). El protocolo de paginación peruano se capturó del portal en vivo (POST y parámetros exactos en `docs/protocol.md`); el recorrido completo de las 15.247 páginas **no se ha ejecutado entero**. |
+| **1b. Extraer toda la información de cada documento** | `peru`: `src/peru/parser.ts` indexa **por rótulo**, así que todo campo publicado se emite —los mapeados al contrato y el resto a `camposExtra`—. `trf5`: `src/parser.ts`, `src/parserModerno.ts`, `src/ficha.ts`. | **Probado** en ambos. En `trf5`, además **en vivo**: 30 procesos reales con partes, clase, asunto y documentos. |
+| **2. Descargar los PDF asociados** | `src/descarga.ts` (`ServicioDescarga`), compartido por los dos objetivos. En `peru` el enlace (`ServletDescarga?uuid=`) viene en la propia lista; en `trf5`, de la ficha. | **En vivo** en `trf5`: 13 PDF reales, tamaños distintos y firma `%PDF-` comprobada uno a uno (`docs/evidencia/pdfs-descargados.md`). En `peru`, el endpoint está **verificado** (devolvió `503` en la primera petición, lo que confirma que existe y limita la tasa) pero **la descarga completa no se ha ejecutado**. |
+| **2b. Nombre descriptivo, carpeta organizada** | `ServicioDescarga.rutaDestino` compone `<proceso>_<idDocumento>_<titulo>.pdf` bajo `output/pdfs/`; `nombreSeguro` sanea para Windows (caracteres ilegales, dispositivos DOS, puntos finales, longitud). | **Probado** (`descarga.test.ts`) y **en vivo**. |
+| **2c. Basta demostrar que puede, sin bajarlos todos** | `MAX_DESCARGAS` (25 por defecto) acota la Fase 2; `MAX_PAGINAS` acota la Fase 1. La reanudación por `state.json` es lo que hace que «dejarlo corriendo hasta el final» sea real y no teórico. | **En vivo**. |
+| **3. Detectar el `429`** | `src/utils/retry.ts`: `429` está en `RETRYABLE`. | **Probado** (`retry.test.ts`). |
+| **3b. Reintentos con retroceso exponencial** | `calcularEspera`: `base·2^(n-1)` con jitter y tope, y respeta `Retry-After`. | **Probado**. |
+| **3c. Continuar con el siguiente si el fallo persiste** | El `try/catch` por documento de ambas Fase 2 registra y sigue; el bucle no se rompe. Un `429` persistente **al paginar** también termina el recorrido de forma ordenada, exportando el CSV de lo ya extraído en vez de morir con «Error no recuperable». | **Probado** y **en vivo** (un documento se rechazó por venir en HTML y la ejecución continuó). |
+| **3d. Registrar qué documentos fallaron para reintentarlos** | `src/persistencia.ts` (`registrarFallo`) → `output/failed.json`, con **el documento concreto** (`id` y título), el motivo, la fase y el contador de intentos **por documento**. Y el proceso queda en estado `parcial`, no `completado`, así que la pasada siguiente **sí lo reintenta**. | **Probado** (`persistencia.test.ts`). |
+| **4. TypeScript, sin Puppeteer/Playwright/Selenium** | `tsconfig.json` en modo `strict`. Dependencias de ejecución: `axios`, `cheerio`, `iconv-lite`. Ninguna automatización de navegador, en ningún objetivo. | **Verificable** en `package.json`. |
+| **5. Código estructurado y documentado** | Capas separadas (`http/`, `jsf/`, `peru/`, `captcha/`, `utils/` y los módulos de dominio); cada fichero abre con el porqué de su diseño; `docs/arquitectura.md` y `docs/protocol.md`. | — |
+| **6. Repositorio con fuente, `package.json`, `README.md` y `.gitignore`** | Los cuatro en la raíz. | — |
+| Tip: delays entre peticiones | `CONFIG.delayBetweenRequestsMs` (2 s) impuesto por `ClienteHttp` en **cada** petición, y `delayBetweenDownloadsMs` (3 s) entre PDF. | **En vivo**. |
+| Tip: retry inteligente | `withRetry` clasifica antes de reaccionar: fatales sin dormir, transitorios con retroceso, y una espera específica para el pool agotado del TRF5. | **Probado**. |
+| Tip: datos en formato estructurado | `records.json` (indexado por `claveUnica`) y `records.csv` (RFC 4180, BOM UTF-8). | **En vivo**. |
+| Tip: probar con un subconjunto | `TEXTO`/`EXPEDIENTE`/`ANIO` en `peru`; `NOME_PARTE`/`NUMERO_PROCESSO` en `trf5`; `MAX_PAGINAS` y `MAX_DESCARGAS` en ambos. | **En vivo**. |
+| Tip: logging del progreso | `src/utils/logger.ts`: una línea por página, descarga y reintento; `DEBUG=1` para el detalle HTTP. | **En vivo**. |
+| Tip: PDF en carpeta organizada | `output/pdfs/` (`output/peru/pdfs/` en el objetivo peruano), con el identificador del expediente como prefijo para que los documentos de un mismo proceso queden juntos al ordenar. | **En vivo**. |
+
+### Lo que esta tabla NO afirma
+
+Que el recorrido completo de cualquiera de los dos portales se haya ejecutado de principio a fin. No se ha hecho, y el enunciado tampoco lo exige: pide demostrar que el scraper *puede* llegar al final si se deja corriendo. Lo que sostiene esa afirmación es la reanudación por `state.json`, la deduplicación por `claveUnica` y el corte del recorrido con evidencia (paginador agotado, total alcanzado o páginas vacías consecutivas), no una ejecución de ocho horas que nadie ha visto.
 
 ---
 

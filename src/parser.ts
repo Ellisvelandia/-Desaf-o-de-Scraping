@@ -32,6 +32,7 @@ import * as cheerio from 'cheerio';
 import { EstructuraInesperadaError } from './errores';
 import { detectarTotalModerno, parsearProcesosModerno } from './parserModerno';
 import { DescargaDirecta, DescargaPostback, DocumentoProceso, Parte, ProcesoJudicial } from './types';
+import { log } from './utils/logger';
 
 /**
  * Se reexporta desde aquí porque este módulo fue siempre su casa pública: el
@@ -62,6 +63,20 @@ type Elemento = Seleccion extends ArrayLike<infer E> ? E : never;
  * no el contador `j_idNNN` de JSF, que sí cambia de un tribunal a otro.
  */
 const SELECTOR_TABLA_MODERNA = '[id$=":processosTable"]';
+
+/**
+ * El parámetro `ca=` del enlace a la ficha.
+ *
+ * Es la ÚNICA fuente de clave que le queda a una fila sin número CNJ. Y es una
+ * fuente válida porque `ca` es un identificador de contenido que el portal asigna
+ * al expediente: estable entre páginas y entre ejecuciones. Un control de
+ * postback NO sirve para lo mismo, porque su nombre lleva dentro el índice de la
+ * fila (`…:tabelaProcessos:3:…`), que cambia en cuanto cambia la página.
+ */
+const RE_PARAMETRO_CA = /[?&]ca=([^&#\s]+)/;
+
+/** Prefijo de la clave derivada, para que no se pueda confundir con un número real. */
+const PREFIJO_SIGILO = 'sigilo:';
 
 /** Número CNJ completo: NNNNNNN-DD.AAAA.J.TR.OOOO. Sirve de ancla estructural. */
 const RE_NUMERO_CNJ = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
@@ -321,8 +336,32 @@ interface Candidata {
   filas: Elemento[];
   /** Filas cuyo contenido incluye un número de proceso. */
   filasConNumero: number;
+  /**
+   * Filas de las que se puede extraer una clave: con número CNJ **o** con enlace
+   * a su ficha (`ca=`). Son las que se pueden guardar y volver a encontrar.
+   *
+   * Se cuenta aparte de `filasConNumero` porque cada una responde a una pregunta
+   * distinta: esta decide si la tabla es utilizable, y aquella cuál de dos tablas
+   * utilizables es la buena.
+   */
+  filasIdentificables: number;
   /** True si la tabla lleva un marcador estructural de RichFaces. */
   estructural: boolean;
+}
+
+/**
+ * Enlace a la ficha de una fila, cuando lo publica como URL con `ca=`.
+ *
+ * Se exige el `ca=` y no cualquier enlace: es el marcador de la página de detalle
+ * del PJe, y sin él se contaría como identificable cualquier fila con un enlace
+ * de menú, lo que llevaría a elegir como tabla de resultados una que no lo es.
+ */
+function enlaceFichaEnFila($: cheerio.CheerioAPI, fila: Elemento): string | undefined {
+  for (const el of $(fila).find('a[href]').toArray()) {
+    const href = $(el).attr('href') ?? '';
+    if (RE_PARAMETRO_CA.test(href)) return href;
+  }
+  return undefined;
 }
 
 /** Reúne las tablas que podrían ser la lista de resultados, sin decidir todavía. */
@@ -350,12 +389,15 @@ function tablasCandidatas($: cheerio.CheerioAPI): Candidata[] {
       // Sin filas de datos no hay nada que decidir, pero la tabla estructural
       // vacía se conserva: distingue "cero resultados" de "tabla desaparecida".
       if (estructurales.has(tabla)) {
-        candidatas.push({ tabla, filas, filasConNumero: 0, estructural: true });
+        candidatas.push({ tabla, filas, filasConNumero: 0, filasIdentificables: 0, estructural: true });
       }
       continue;
     }
     const filasConNumero = filas.filter((f) => numeroEnFila($, f) !== undefined).length;
-    candidatas.push({ tabla, filas, filasConNumero, estructural: estructurales.has(tabla) });
+    const filasIdentificables = filas.filter(
+      (f) => numeroEnFila($, f) !== undefined || enlaceFichaEnFila($, f) !== undefined,
+    ).length;
+    candidatas.push({ tabla, filas, filasConNumero, filasIdentificables, estructural: estructurales.has(tabla) });
   }
   return candidatas;
 }
@@ -368,8 +410,13 @@ function tablasCandidatas($: cheerio.CheerioAPI): Candidata[] {
  * un número suelto en una celda no es una lista de resultados.
  */
 function elegirTabla(candidatas: Candidata[]): Candidata | undefined {
+  // El umbral mira las filas IDENTIFICABLES, no solo las que traen número. Con el
+  // criterio anterior, una página entera de expedientes en segredo de justiça
+  // —legítima: en la captura real del TRF1 son 8 de cada 30 filas— no se elegía
+  // como tabla de resultados y la extracción devolvía cero. El desempate sigue
+  // siendo por número, que es la señal más fuerte.
   const validas = candidatas.filter(
-    (c) => c.filasConNumero > 0 && (c.estructural || c.filasConNumero >= 2),
+    (c) => c.filasIdentificables > 0 && (c.estructural || c.filasIdentificables >= 2),
   );
   if (validas.length === 0) return undefined;
   return validas.reduce((mejor, c) => {
@@ -712,23 +759,41 @@ function construirProceso(
   // la fila antes de descartarla: perder una fila es peor que leerla de otra celda.
   const bruto = celdaNumero ? texto($, celdaNumero) : '';
   const m = RE_NUMERO_CNJ_EN_TEXTO.exec(bruto) ?? RE_NUMERO_CNJ_EN_TEXTO.exec(texto($, fila));
-  if (!m) return undefined;
 
   // Se mantiene como cadena: el número CNJ tiene ceros a la izquierda que
   // cualquier conversión numérica destruiría.
-  //
-  // `claveUnica` repite el número porque esta variante ancla cada fila al
-  // formato CNJ: aquí, por construcción, no hay filas sin número que necesiten
-  // una clave derivada. Rellenarla igualmente es lo que mantiene el contrato de
-  // `types.ts` válido para las dos variantes.
-  const numero = m[0];
-  const proceso: ProcesoJudicial = { claveUnica: numero, numeroProcesso: numero };
+  const numero = m ? m[0] : undefined;
 
   // Cómo abrir la ficha de este proceso. Se lee AQUÍ y no en la Fase 2 porque el
   // control vive en la fila, y la fila solo existe mientras esta página está en
   // el documento vigente. Si la fila no lo publica de forma inequívoca, el campo
   // se omite (contrato de types.ts) y la Fase 2 lo registra como fallo.
   const apertura = aperturaDeFila($, fila, numero);
+
+  /**
+   * Clave del registro.
+   *
+   * Con número, ES el número. Sin él —segredo de justiça— se deriva del `ca=` del
+   * enlace a la ficha, igual que ya hacía `parserModerno.ts`.
+   *
+   * ANTES ESTA FILA SE DESCARTABA. Es la variante del objetivo del enunciado, y
+   * en la única captura real comparable (TRF1) los expedientes sin número son 8
+   * de cada 30: se tiraba el 27 % de cada página, en silencio, contra un
+   * enunciado que pide extraer toda la información disponible. Lo que NUNCA se
+   * hace es escribir la clave derivada en `numeroProcesso`: la clave es un índice
+   * de este scraper y el número es un dato del tribunal.
+   */
+  const ca = RE_PARAMETRO_CA.exec(enlaceFichaEnFila($, fila) ?? '')?.[1];
+  const clave = numero ?? (ca === undefined ? undefined : `${PREFIJO_SIGILO}${ca}`);
+  // Sin número y sin enlace no hay clave posible: el registro no se podría
+  // deduplicar ni volver a encontrar, así que guardarlo produciría duplicados en
+  // cada pasada. El llamante avisa de cuántas filas cayeron por aquí.
+  if (clave === undefined) return undefined;
+
+  const proceso: ProcesoJudicial = { claveUnica: clave };
+  if (numero !== undefined) proceso.numeroProcesso = numero;
+  else proceso.enSigilo = true;
+
   if (apertura) proceso.apertura = apertura;
 
   const clase = celdaDe(plan.clase);
@@ -804,14 +869,18 @@ export function parsearProcesos($: cheerio.CheerioAPI, pagina: number): ProcesoJ
   if (!elegida) {
     // Una tabla de RichFaces con filas pero sin un solo número de proceso es la
     // señal de que la estructura cambió; sin ella, simplemente no hay lista.
-    const sospechosa = candidatas.find((c) => c.estructural && c.filas.length >= 2 && c.filasConNumero === 0);
+    // El criterio es «ni número NI enlace», no «ni número» a secas. Una página
+    // entera de expedientes en segredo de justiça es legítima —no publican número
+    // pero sí su ficha—, y con el criterio anterior abortaba la extracción
+    // tomándola por una tabla rota.
+    const sospechosa = candidatas.find((c) => c.estructural && c.filas.length >= 2 && c.filasIdentificables === 0);
     if (sospechosa && !anunciaListaVacia(texto($, sospechosa.tabla))) {
       const primera = sospechosa.filas[0];
       const muestra = primera === undefined ? [] : $(primera).children('td, th').toArray().map((c) => texto($, c));
       throw new EstructuraInesperadaError(
-        `Hay una tabla de RichFaces con ${sospechosa.filas.length} filas pero ninguna contiene un número de ` +
-          'proceso con formato CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO): cambió el formato del número o la tabla ya no ' +
-          `es la de resultados. Primera fila: ${describir(muestra)}`,
+        `Hay una tabla de RichFaces con ${sospechosa.filas.length} filas pero ninguna publica ni un número de ` +
+          'proceso con formato CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO) ni un enlace a su ficha: cambió el formato del ' +
+          `número o la tabla ya no es la de resultados. Primera fila: ${describir(muestra)}`,
       );
     }
     return [];
@@ -825,14 +894,26 @@ export function parsearProcesos($: cheerio.CheerioAPI, pagina: number): ProcesoJ
 
   const procesos: ProcesoJudicial[] = [];
   const vistos = new Set<string>();
+  let descartadas = 0;
   for (const fila of elegida.filas) {
     const proceso = construirProceso($, fila, plan, pagina);
-    if (!proceso) continue;
+    if (!proceso) {
+      // Con aviso, no en silencio: descartar una fila es perder un dato que el
+      // enunciado pide extraer, y tiene que verse en la salida normal.
+      descartadas++;
+      continue;
+    }
     // RichFaces duplica filas al fijar cabeceras. En esta variante `claveUnica`
     // es el propio número CNJ, que es la clave que asigna el tribunal.
     if (vistos.has(proceso.claveUnica)) continue;
     vistos.add(proceso.claveUnica);
     procesos.push(proceso);
+  }
+  if (descartadas > 0) {
+    log.warn(
+      `Página ${pagina}: ${descartadas} fila(s) sin número CNJ ni enlace a su ficha, descartadas por no ` +
+        'tener ninguna clave con la que guardarlas',
+    );
   }
   return procesos;
 }
@@ -1083,7 +1164,11 @@ function leerControl($: cheerio.CheerioAPI, el: Elemento): ControlLeido {
 function aperturaDeFila(
   $: cheerio.CheerioAPI,
   fila: Elemento,
-  numero: string,
+  // Opcional porque los expedientes en segredo de justiça no publican número. Sin
+  // él se pierde la señal autoverificable —el control rotulado con el propio
+  // número—, así que solo queda la regla conservadora: aceptar el control si es
+  // el único de la fila, y no adivinar si hay varios.
+  numero: string | undefined,
 ): DescargaDirecta | DescargaPostback | undefined {
   const utiles = $(fila)
     .find('a[href], a[onclick], [onclick]')
@@ -1093,7 +1178,8 @@ function aperturaDeFila(
 
   if (utiles.length === 0) return undefined;
 
-  const porNumero = utiles.find(({ el }) => normalizar($(el).text()).includes(numero));
+  const porNumero =
+    numero === undefined ? undefined : utiles.find(({ el }) => normalizar($(el).text()).includes(numero));
   const elegido = porNumero ?? (utiles.length === 1 ? utiles[0] : undefined);
   if (!elegido) return undefined;
 

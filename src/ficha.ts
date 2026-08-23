@@ -149,7 +149,7 @@ function normalizar(texto: string): string {
  * el atributo HTML; sin deshacerlo, cualquier valor extraído de un `onclick`
  * llegaría con la secuencia cruda.
  */
-function desescaparJs(valor: string): string {
+export function desescaparJs(valor: string): string {
   return valor.replace(
     /\\x([0-9a-fA-F]{2})|\\u([0-9a-fA-F]{4})|\\(.)/g,
     (_completo: string, hex?: string, unicode?: string, simple?: string): string => {

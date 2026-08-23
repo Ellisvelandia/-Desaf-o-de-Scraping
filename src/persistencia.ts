@@ -162,6 +162,19 @@ function esEstado(valor: unknown): valor is EstadoEjecucion {
  * failed.json escrito por una versión previa no debe perder los reintentos ya
  * contados solo porque el campo cambió de nombre.
  */
+/**
+ * Identidad del documento dentro de un fallo, para deduplicar.
+ *
+ * El `id` manda cuando el portal lo publica —es estable entre ejecuciones—; si no,
+ * el título. Cadena vacía para los fallos que no son de un documento (`pagina`,
+ * `ficha`), de modo que esos sigan deduplicándose por (clave, fase) como antes.
+ */
+function identidadDocumento(fallo: Pick<Fallo, 'documento'>): string {
+  const doc = fallo.documento;
+  if (doc === undefined) return '';
+  return texto(doc.id) || texto(doc.titulo);
+}
+
 function aFallo(valor: unknown): Fallo | undefined {
   if (typeof valor !== 'object' || valor === null) return undefined;
   const candidato = valor as { claveUnica?: unknown; numeroProcesso?: unknown; fase?: unknown };
@@ -314,15 +327,25 @@ export class Persistencia {
   /**
    * Anota un fallo para reintentarlo en otra pasada.
    *
-   * La clave es (claveUnica, fase): el mismo proceso puede fallar al listar su
-   * ficha y también al descargar un documento, y son dos problemas distintos.
+   * La clave es (claveUnica, fase, documento): el mismo proceso puede fallar al
+   * listar su ficha y también al descargar un documento, y son dos problemas
+   * distintos; y DENTRO de la fase `documento` puede fallar más de uno.
+   *
+   * El tercer componente se añadió porque sin él el contador `intentos` mentía:
+   * dos documentos distintos que fallaban una vez cada uno producían una sola
+   * entrada con `intentos: 2`, idéntica a la de un documento que falló dos veces.
+   * El enunciado pide saber QUÉ documentos fallaron, y con la clave anterior eso
+   * era irrecuperable del fichero.
+   *
    * Se indexa por `claveUnica` y no por el número CNJ para que un proceso en
    * sigilo —que no tiene número— también pueda anotarse y reintentarse.
    */
   registrarFallo(fallo: Omit<Fallo, 'intentos' | 'ultimoIntentoEn'>): void {
     const fallos = this.cargarFallos();
     const ahora = new Date().toISOString();
-    const existente = fallos.find((f) => f.claveUnica === fallo.claveUnica && f.fase === fallo.fase);
+    const existente = fallos.find(
+      (f) => f.claveUnica === fallo.claveUnica && f.fase === fallo.fase && identidadDocumento(f) === identidadDocumento(fallo),
+    );
 
     if (existente) {
       // Se acumula en la entrada existente en vez de duplicar: así el contador

@@ -19,6 +19,8 @@
 import * as readline from 'readline';
 import { CONFIG } from './config';
 import { CaptchaHumano, CaptchaPorArchivo, ResolutorCaptcha } from './captcha/humano';
+import { ScraperPeru } from './peru/scraper';
+import { CriteriosPeru } from './peru/session';
 import { enteroPositivo, Scraper } from './scraper';
 import { CriteriosBusqueda } from './session';
 import { log } from './utils/logger';
@@ -26,6 +28,10 @@ import { BloqueadoPorWafError, ServidorSaturadoError } from './utils/retry';
 
 /** Veces que se repite la pregunta del menú antes de rendirse. */
 const MAX_INTENTOS_MENU = 5;
+
+/** Rótulo del portal activo, para el menú y los mensajes de error. */
+const NOMBRE_OBJETIVO =
+  CONFIG.objetivo === 'peru' ? 'Jurisprudencia Nacional Sistematizada (Perú)' : 'Consulta Pública PJe TRF5 (Brasil)';
 
 function resolutor(): ResolutorCaptcha {
   return process.env.CAPTCHA_MODE === 'file'
@@ -43,6 +49,21 @@ function criterios(): CriteriosBusqueda {
 }
 
 /**
+ * Criterios del portal peruano.
+ *
+ * Todos opcionales: a diferencia del PJe, este buscador acepta una consulta sin
+ * filtros y devuelve el corpus entero, que es el caso que demuestra el requisito
+ * de «navegar por todas las páginas».
+ */
+function criteriosPeru(): CriteriosPeru {
+  const c: CriteriosPeru = {};
+  if (process.env.TEXTO) c.texto = process.env.TEXTO;
+  if (process.env.EXPEDIENTE) c.expediente = process.env.EXPEDIENTE;
+  if (process.env.ANIO) c.anio = process.env.ANIO;
+  return c;
+}
+
+/**
  * Pregunta por la terminal.
  *
  * El manejador de `close` no es decorativo: si la entrada estándar está cerrada
@@ -54,15 +75,42 @@ function criterios(): CriteriosBusqueda {
 function preguntar(texto: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolver) => {
-    rl.on('close', () => resolver(''));
+    // El guardia NO es decorativo, y su ausencia rompía el menú entero: `rl.close()`
+    // emite `close` de forma SÍNCRONA, así que el manejador corría antes que el
+    // `resolver(respuesta)` de la línea siguiente y la promesa se quedaba con la
+    // cadena vacía. El efecto era que `npm start` —el primer comando del README—
+    // rechazaba toda opción tecleada y salía por el tope de intentos.
+    let respondido = false;
+    rl.on('close', () => {
+      if (!respondido) resolver('');
+    });
     rl.question(texto, (respuesta) => {
+      respondido = true;
       rl.close();
       resolver(respuesta.trim());
     });
   });
 }
 
-async function main(): Promise<void> {
+/**
+ * Ejecuta el objetivo peruano.
+ *
+ * Vive en su propia función para que el flujo del TRF5 —con su CAPTCHA y su
+ * resolutor— no tenga que arrastrar parámetros que este portal no usa.
+ */
+async function ejecutarPeru(modo: string): Promise<void> {
+  const scraper = new ScraperPeru();
+  const opciones = {
+    criterios: criteriosPeru(),
+    maxPaginas: enteroPositivo(process.env.MAX_PAGINAS, 10000, 'MAX_PAGINAS'),
+    maxDescargas: enteroPositivo(process.env.MAX_DESCARGAS, 25, 'MAX_DESCARGAS'),
+  };
+  if (modo === 'fase1' || modo === 'completo') await scraper.fase1(opciones);
+  if (modo === 'fase2' || modo === 'completo') await scraper.fase2(opciones);
+}
+
+/** Ejecuta el objetivo brasileño, el único de los dos que pide un CAPTCHA. */
+async function ejecutarTrf5(modo: string): Promise<void> {
   const scraper = new Scraper(resolutor());
   const opciones = {
     criterios: criterios(),
@@ -71,20 +119,31 @@ async function main(): Promise<void> {
     // silencio justo donde su función es impedir una descarga masiva.
     maxDescargas: enteroPositivo(process.env.MAX_DESCARGAS, 25, 'MAX_DESCARGAS'),
   };
+  if (modo === 'fase1' || modo === 'completo') await scraper.fase1(opciones);
+  if (modo === 'fase2' || modo === 'completo') await scraper.fase2(opciones);
+}
 
-  const argumento = process.argv[2];
+async function main(): Promise<void> {
+  // El token del objetivo no es un modo: se descarta antes de elegir la fase,
+  // para que `ts-node src/index.ts peru fase1` no intente ejecutar «peru».
+  const argumento = process.argv.slice(2).find((a) => a !== 'peru' && a !== 'trf5');
   let eleccion = argumento;
 
   if (!eleccion) {
     console.log('\n==================================================');
-    console.log('  Scraper · Consulta Pública PJe TRF5');
+    console.log(`  Scraper · ${NOMBRE_OBJETIVO}`);
     console.log('==================================================');
     console.log('  1) Fase 1: extraer metadatos y guardarlos en JSON/CSV');
     console.log('  2) Fase 2: descargar los PDF de lo ya extraído');
     console.log('  3) Flujo completo (Fase 1 + Fase 2)');
     console.log('==================================================');
-    console.log('  Nota: el portal exige un CAPTCHA para buscar. Se te pedirá');
-    console.log('  una vez por fase; el resto del recorrido es automático.\n');
+    if (CONFIG.objetivo === 'peru') {
+      console.log('  Este portal no pide CAPTCHA: la ejecución es desatendida');
+      console.log('  de principio a fin.\n');
+    } else {
+      console.log('  Nota: el portal exige un CAPTCHA para buscar. Se te pedirá');
+      console.log('  una vez por fase; el resto del recorrido es automático.\n');
+    }
     // Cota explícita: sin ella, una entrada estándar cerrada convierte el menú en
     // un bucle infinito de preguntas que nadie puede responder.
     for (let i = 0; i < MAX_INTENTOS_MENU && !['1', '2', '3'].includes(eleccion ?? ''); i++) {
@@ -100,8 +159,8 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  if (modo === 'fase1' || modo === 'completo') await scraper.fase1(opciones);
-  if (modo === 'fase2' || modo === 'completo') await scraper.fase2(opciones);
+  if (CONFIG.objetivo === 'peru') await ejecutarPeru(modo);
+  else await ejecutarTrf5(modo);
 
   log.info('Proceso finalizado.');
 }
@@ -109,9 +168,16 @@ async function main(): Promise<void> {
 main().catch((e) => {
   if (e instanceof BloqueadoPorWafError) {
     log.error('El WAF del portal bloqueó esta dirección IP.');
-    log.error('Si tienes una VPN activa, apágala: el TRF5 rechaza los rangos de alojamiento y anonimizadores.');
+    // El consejo es OPUESTO en cada portal, y darlo al revés cuesta una tarde:
+    // el TRF5 rechaza los rangos de anonimizadores, mientras que el portal
+    // peruano rechaza con 403 todo lo que no salga desde Perú.
+    log.error(
+      CONFIG.objetivo === 'peru'
+        ? 'Este portal solo atiende desde Perú. Necesitas una VPN de ámbito de SISTEMA (no una extensión del navegador: esa no enruta el proceso de Node).'
+        : 'Si tienes una VPN activa, apágala: el TRF5 rechaza los rangos de alojamiento y anonimizadores.',
+    );
   } else if (e instanceof ServidorSaturadoError) {
-    log.error('El portal del TRF5 no está sirviendo peticiones (pool de conexiones agotado en su servidor).');
+    log.error(`El portal (${NOMBRE_OBJETIVO}) no está sirviendo peticiones.`);
     log.error('Es un fallo del tribunal, no del scraper. Reintenta más tarde.');
   } else {
     log.error(`Error no recuperable: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
