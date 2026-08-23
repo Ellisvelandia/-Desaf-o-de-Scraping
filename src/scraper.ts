@@ -15,7 +15,7 @@ import { ResolutorCaptcha } from './captcha/humano';
 import { detectarTotalResultados, parsearDocumentos, parsearProcesos, EstructuraInesperadaError } from './parser';
 import { parsearFicha } from './ficha';
 import { construirOpcionesPagina, detectarPaginacion, hayPaginaSiguiente } from './paginacion';
-import { Persistencia } from './persistencia';
+import { documentoParaFallo, Persistencia } from './persistencia';
 import { ServicioDescarga } from './descarga';
 import { DocumentoProceso, EstadoEjecucion, ProcesoJudicial } from './types';
 import { log } from './utils/logger';
@@ -427,7 +427,7 @@ export class Scraper {
           this.persistencia.registrarFallo({
             claveUnica: proceso.claveUnica,
             fase: 'documento',
-            documento: { ...(documento.id ? { id: documento.id } : {}), titulo: documento.titulo },
+            documento: documentoParaFallo(documento),
             motivo,
           });
           // Un documento fallido no detiene el run: se registra y se sigue, como pide el desafío.

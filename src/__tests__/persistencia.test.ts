@@ -405,6 +405,46 @@ describe('registrarFallo', () => {
     expect(persistencia.cargarFallos()).toHaveLength(2);
   });
 
+  it('sin id y con el mismo título, distingue por el descriptor de descarga', () => {
+    // El caso del PJe: la ficha repite «Despacho» sin id. ServicioDescarga ya
+    // hashea el descriptor para el nombre del fichero; failed.json tiene que
+    // usar la misma identidad, o dos fallos distintos colapsan en una entrada
+    // con un contador de intentos compartido y el fichero no dice cuál falló.
+    const base = { claveUnica: '0000001-11.2024.4.05.8300', fase: 'documento', motivo: '429' };
+    const titulo = 'Despacho';
+    persistencia.registrarFallo({
+      ...base,
+      documento: { titulo, descarga: { tipo: 'url', url: '/pjeconsulta/documento.seam?id=aaa' } },
+    });
+    persistencia.registrarFallo({
+      ...base,
+      documento: { titulo, descarga: { tipo: 'url', url: '/pjeconsulta/documento.seam?id=bbb' } },
+    });
+
+    const fallos = persistencia.cargarFallos();
+    expect(fallos).toHaveLength(2);
+    expect(fallos.every((f) => f.intentos === 1)).toBe(true);
+    expect(fallos.every((f) => f.documento?.titulo === titulo)).toBe(true);
+  });
+
+  it('sin id, el mismo descriptor acumula intentos en una sola entrada', () => {
+    const fallo = {
+      claveUnica: '0000001-11.2024.4.05.8300',
+      fase: 'documento' as const,
+      documento: {
+        titulo: 'Despacho',
+        descarga: { tipo: 'url' as const, url: '/pjeconsulta/documento.seam?id=aaa' },
+      },
+      motivo: '429',
+    };
+    persistencia.registrarFallo(fallo);
+    persistencia.registrarFallo({ ...fallo, motivo: '429 otra vez' });
+
+    const fallos = persistencia.cargarFallos();
+    expect(fallos).toHaveLength(1);
+    expect(fallos[0].intentos).toBe(2);
+  });
+
   it('los fallos que no son de un documento siguen deduplicando por proceso y fase', () => {
     // Una página o una ficha no tienen documento; su clave no debe cambiar de
     // comportamiento por haber añadido el campo nuevo.

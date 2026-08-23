@@ -161,8 +161,12 @@ export interface Fallo {
    * un proceso con quince documentos y dos fallos producía UNA entrada con
    * `intentos: 2`, indistinguible de un documento que falló dos veces. Quien
    * quisiera reintentar «los documentos que fallaron» no podía saber cuáles eran.
+   *
+   * `fecha` y `descarga` van cuando el portal no publica `id`: el PJe repite
+   * títulos como «Despacho», y sin el descriptor de descarga dos fallos distintos
+   * colapsarían en una sola entrada al deduplicar `failed.json`.
    */
-  documento?: { id?: string; titulo: string };
+  documento?: Pick<DocumentoProceso, 'id' | 'titulo' | 'fecha' | 'descarga'>;
   motivo: string;
   intentos: number;
   ultimoIntentoEn: string;

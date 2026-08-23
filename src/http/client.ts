@@ -24,6 +24,36 @@ export interface RespuestaTexto {
   urlFinal: string;
 }
 
+/**
+ * Traduce firmas conocidas de error del portal en errores tipados.
+ *
+ * El 403 de Radware se mira ANTES del filtro `text/html`: su cuerpo es texto
+ * plano (~334 B) con «403 Forbidden» + «Transaction ID», y si se exigía HTML
+ * salía como un HTTP 403 genérico sin el aviso de VPN de sistema.
+ */
+export function errorDisfrazadoDelPortal(
+  status: number,
+  contentType: string,
+  cabecera: string,
+  urlFinal: string,
+): Error | undefined {
+  if (status === 403 && /Transaction ID/i.test(cabecera) && /403 Forbidden/i.test(cabecera)) {
+    return new BloqueadoPorWafError(
+      'El WAF del portal rechazó esta dirección IP con un 403 (bloqueo por geolocalización)',
+    );
+  }
+
+  if (!/text\/html/i.test(contentType)) return undefined;
+
+  if (/Requisi[cç][aã]o\s*-?\s*Rejeitada|seu acesso ao servi[cç]o foi bloqueado/i.test(cabecera)) {
+    return new BloqueadoPorWafError();
+  }
+  if (/errorUnexpected\.seam/i.test(urlFinal) || /Erro inesperado, por favor tente novamente/i.test(cabecera)) {
+    return new ServidorSaturadoError();
+  }
+  return undefined;
+}
+
 export class ClienteHttp {
   private readonly axios: AxiosInstance;
   private readonly cookies = new Map<string, string>();
@@ -137,31 +167,10 @@ export class ClienteHttp {
   /** El portal devuelve 200 para dos páginas de error distintas. Se convierten en errores tipados. */
   private detectarErroresDisfrazados(r: AxiosResponse<Buffer>): void {
     const tipo = String(r.headers['content-type'] ?? '');
-    if (!/text\/html/i.test(tipo)) return;
     const cabecera = this.decodificar(r.data.subarray(0, 4096), tipo);
-
-    // Bloqueo geográfico del WAF Radware del portal peruano. Se reconoce por su
-    // firma —un 403 cuyo cuerpo entero es «403 Forbidden» más un «Transaction
-    // ID»— y no por el objetivo activo, porque lo que identifica al bloqueo es la
-    // respuesta, no contra qué host se pidió.
-    //
-    // Sin esto, el fallo MÁS probable de ese objetivo salía por consola como una
-    // traza de `HTTP 403 en GET …`, que no dice lo único que hay que saber para
-    // resolverlo: que el portal solo atiende desde Perú y que una VPN de
-    // extensión de navegador no basta porque no enruta el proceso de Node.
-    if (r.status === 403 && /Transaction ID/i.test(cabecera) && /403 Forbidden/i.test(cabecera)) {
-      throw new BloqueadoPorWafError(
-        'El WAF del portal rechazó esta dirección IP con un 403 (bloqueo por geolocalización)',
-      );
-    }
-
-    if (/Requisi[cç][aã]o\s*-?\s*Rejeitada|seu acesso ao servi[cç]o foi bloqueado/i.test(cabecera)) {
-      throw new BloqueadoPorWafError();
-    }
     const urlFinal = String(r.request?.res?.responseUrl ?? r.config.url ?? '');
-    if (/errorUnexpected\.seam/i.test(urlFinal) || /Erro inesperado, por favor tente novamente/i.test(cabecera)) {
-      throw new ServidorSaturadoError();
-    }
+    const error = errorDisfrazadoDelPortal(r.status, tipo, cabecera, urlFinal);
+    if (error) throw error;
   }
 
   private aTexto(r: AxiosResponse<Buffer>): RespuestaTexto {

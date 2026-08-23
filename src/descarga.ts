@@ -217,9 +217,11 @@ export class ServicioDescarga {
    * El sustituto es la fecha, si la hay, más un resumen corto del descriptor de
    * descarga. Ese descriptor es la identidad real del documento (la URL, o el
    * control y los parámetros del postback), es estable entre ejecuciones y es lo
-   * mismo que ya usa `claveDocumento` en `ficha.ts` para no fundirlos.
+   * mismo que ya usa `claveDocumento` en `ficha.ts` para no fundirlos —y lo que
+   * `identidadDocumento` en persistencia usa para no fundir entradas de
+   * `failed.json`.
    */
-  private static discriminante(documento: DocumentoProceso): string {
+  static discriminante(documento: Pick<DocumentoProceso, 'id' | 'fecha' | 'descarga'>): string {
     if (documento.id) return documento.id;
     const huella = createHash('sha1').update(JSON.stringify(documento.descarga ?? '')).digest('hex').slice(0, 8);
     return [documento.fecha?.slice(0, 10) ?? '', huella].filter(Boolean).join('_');

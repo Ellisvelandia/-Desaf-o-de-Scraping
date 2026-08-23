@@ -13,7 +13,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CONFIG } from './config';
-import { EstadoEjecucion, Fallo, Parte, ProcesoJudicial } from './types';
+import { ServicioDescarga } from './descarga';
+import { DocumentoProceso, EstadoEjecucion, Fallo, Parte, ProcesoJudicial } from './types';
 import { log } from './utils/logger';
 
 /**
@@ -165,9 +166,15 @@ function esEstado(valor: unknown): valor is EstadoEjecucion {
 /**
  * Identidad del documento dentro de un fallo, para deduplicar.
  *
- * El `id` manda cuando el portal lo publica —es estable entre ejecuciones—; si no,
- * el título. Cadena vacía para los fallos que no son de un documento (`pagina`,
- * `ficha`), de modo que esos sigan deduplicándose por (clave, fase) como antes.
+ * El `id` manda cuando el portal lo publica —es estable entre ejecuciones—. Si
+ * no, la misma huella que `ServicioDescarga.discriminante` (fecha + hash del
+ * descriptor de descarga): el PJe repite títulos como «Despacho» sin `id`, y
+ * clavear solo por título fundía dos fallos distintos en una entrada con un
+ * `intentos` compartido. El título solo queda como último recurso para entradas
+ * viejas de `failed.json` que no guardaron `descarga`.
+ *
+ * Cadena vacía para los fallos que no son de un documento (`pagina`, `ficha`),
+ * de modo que esos sigan deduplicándose por (clave, fase) como antes.
  */
 function identidadDocumento(fallo: Pick<Fallo, 'documento'>): string {
   const doc = fallo.documento;
@@ -177,7 +184,29 @@ function identidadDocumento(fallo: Pick<Fallo, 'documento'>): string {
   // DENTRO del catch que registra el fallo, y ese error tumbaba la Fase 2 entera
   // justo en el camino cuyo trabajo es que un fallo no detenga la ejecución.
   if (typeof doc !== 'object' || doc === null) return '';
-  return texto((doc as { id?: unknown }).id) || texto((doc as { titulo?: unknown }).titulo);
+  const tipado = doc as Partial<DocumentoProceso>;
+  const id = texto(tipado.id);
+  if (id) return id;
+  if (tipado.descarga != null || texto(tipado.fecha)) {
+    return ServicioDescarga.discriminante({
+      ...(texto(tipado.fecha) ? { fecha: tipado.fecha } : {}),
+      ...(tipado.descarga != null ? { descarga: tipado.descarga } : {}),
+    });
+  }
+  return texto(tipado.titulo);
+}
+
+/**
+ * Recorte de un documento para anotarlo en `failed.json`: lo mínimo para
+ * identificarlo (y reintentarlo) sin volcar el resto del proceso.
+ */
+export function documentoParaFallo(documento: DocumentoProceso): NonNullable<Fallo['documento']> {
+  return {
+    ...(documento.id ? { id: documento.id } : {}),
+    titulo: documento.titulo,
+    ...(documento.fecha ? { fecha: documento.fecha } : {}),
+    ...(documento.descarga ? { descarga: documento.descarga } : {}),
+  };
 }
 
 function aFallo(valor: unknown): Fallo | undefined {

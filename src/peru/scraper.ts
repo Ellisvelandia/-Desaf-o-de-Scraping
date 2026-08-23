@@ -22,7 +22,7 @@ import * as fs from 'fs';
 import { CONFIG } from '../config';
 import { ServicioDescarga } from '../descarga';
 import { EstructuraInesperadaError } from '../errores';
-import { Persistencia } from '../persistencia';
+import { documentoParaFallo, Persistencia } from '../persistencia';
 import { EstadoEjecucion, ProcesoJudicial } from '../types';
 import { mismoCriterio } from '../scraper';
 import { log } from '../utils/logger';
@@ -255,7 +255,7 @@ export class ScraperPeru {
           this.persistencia.registrarFallo({
             claveUnica: proceso.claveUnica,
             fase: 'documento',
-            documento: { ...(documento.id ? { id: documento.id } : {}), titulo: documento.titulo },
+            documento: documentoParaFallo(documento),
             motivo,
           });
           // Un documento fallido no detiene la ejecución: se registra y se sigue.
