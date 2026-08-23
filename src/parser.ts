@@ -14,15 +14,32 @@
  *    a medias. La ausencia de tabla, en cambio, no es un error: es una página
  *    sin resultados y devuelve `[]`.
  *
- * Nota sobre la evidencia: `docs/protocol.md` deja la «forma de la fila» como
- * PENDIENTE (la búsqueda capturada terminó en `errorUnexpected`). Los selectores
- * estructurales que se usan aquí son los que RichFaces 3.3 genera siempre
- * (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`); las etiquetas de
- * cabecera se tratan como sinónimos tolerantes y todo lo que no encaje viaja a
- * `camposExtra` sin perderse.
+ * Nota sobre la evidencia, que decide qué camino toma cada página: el PJe sirve
+ * la Consulta Pública con DOS plantillas incompatibles (ver `docs/protocol.md`,
+ * «Dos variantes de la Consulta Pública»).
+ *
+ *  - Plantilla MODERNA (`fPP`, tabla `…:processosTable`): VERIFICADA contra tres
+ *    capturas reales. `parsearProcesos` la reconoce por la tabla y delega en
+ *    `parserModerno.ts`, que sabe descomponer su celda «Processo» compuesta.
+ *  - Plantilla ANTIGUA (`consultaPublicaForm`, la del TRF5 1.º grado): su tabla
+ *    de resultados sigue SIN capturar, porque el CAPTCHA de imagen la bloquea.
+ *    Es la que lee el resto de este módulo, con los marcadores estructurales que
+ *    RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con
+ *    sufijo `:tb`); las etiquetas de cabecera se tratan como sinónimos
+ *    tolerantes y todo lo que no encaje viaja a `camposExtra` sin perderse.
  */
 import * as cheerio from 'cheerio';
+import { EstructuraInesperadaError } from './errores';
+import { detectarTotalModerno, parsearProcesosModerno } from './parserModerno';
 import { DescargaDirecta, DescargaPostback, DocumentoProceso, Parte, ProcesoJudicial } from './types';
+
+/**
+ * Se reexporta desde aquí porque este módulo fue siempre su casa pública: el
+ * orquestador y las pruebas lo importan de `./parser`. Su declaración se mudó a
+ * `./errores` para que `parserModerno` pueda lanzarlo sin cerrar un ciclo de
+ * módulos con este fichero.
+ */
+export { EstructuraInesperadaError };
 
 /**
  * Tipos de cheerio derivados de su propia API.
@@ -34,15 +51,17 @@ import { DescargaDirecta, DescargaPostback, DocumentoProceso, Parte, ProcesoJudi
 type Seleccion = ReturnType<ReturnType<cheerio.CheerioAPI['root']>['children']>;
 type Elemento = Seleccion extends ArrayLike<infer E> ? E : never;
 
-/** La página tiene una tabla de resultados, pero ya no se parece a la que se sabe leer. */
-export class EstructuraInesperadaError extends Error {
-  constructor(mensaje: string) {
-    super(mensaje);
-    this.name = 'EstructuraInesperadaError';
-  }
-}
-
 // ---------------------------------------------------------------- constantes
+
+/**
+ * Marca de la plantilla MODERNA de la Consulta Pública: la tabla de resultados
+ * `<…>:processosTable`.
+ *
+ * Se ancla por SUFIJO de id. El prefijo es el del formulario que la envuelve
+ * (`fPP` en las tres instancias capturadas) y el sufijo lo escribe la plantilla,
+ * no el contador `j_idNNN` de JSF, que sí cambia de un tribunal a otro.
+ */
+const SELECTOR_TABLA_MODERNA = '[id$=":processosTable"]';
 
 /** Número CNJ completo: NNNNNNN-DD.AAAA.J.TR.OOOO. Sirve de ancla estructural. */
 const RE_NUMERO_CNJ = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
@@ -759,6 +778,20 @@ function construirProceso(
  * resultados pero ya no se reconoce su contenido.
  */
 export function parsearProcesos($: cheerio.CheerioAPI, pagina: number): ProcesoJudicial[] {
+  // La variante se decide por EVIDENCIA en el documento, no por configuración ni
+  // por lo que dijera la sesión al abrirse: una respuesta A4J puede traer la
+  // tabla de resultados sin el formulario que la identificaba.
+  //
+  // Por qué no basta con el camino genérico de este módulo: sobre el fixture
+  // real `pje-nuevo-resultados.html` sí encuentra las 30 filas y sus números,
+  // pero la celda «Processo» de la plantilla moderna es COMPUESTA (clase
+  // judicial + sigla + número + asunto + los dos polos en un solo bloque de
+  // texto), así que devuelve registros sin `classeJudicial`, sin `partes` y —lo
+  // que de verdad importa— sin `apertura`. Sin `apertura`, la Fase 2 marca
+  // fallido cada proceso sin haber pedido nada. El parser específico saca los
+  // cinco datos y el enlace a la ficha.
+  if ($(SELECTOR_TABLA_MODERNA).length > 0) return parsearProcesosModerno($, pagina);
+
   const candidatas = tablasCandidatas($);
   const elegida = elegirTabla(candidatas);
 
@@ -808,6 +841,16 @@ export function parsearProcesos($: cheerio.CheerioAPI, pagina: number): ProcesoJ
  * parar la extracción.
  */
 export function detectarTotalResultados($: cheerio.CheerioAPI): number | undefined {
+  // La plantilla moderna publica el total en un rótulo propio del pie de la
+  // tabla ("106073 resultados encontrados"). Se pregunta primero al lector que
+  // conoce ese rótulo; si no lo encuentra se sigue con el barrido genérico, que
+  // es un respaldo y no una contradicción: ambos exigen una frase explícita de
+  // total y ninguno deduce nada del paginador.
+  if ($(SELECTOR_TABLA_MODERNA).length > 0) {
+    const moderno = detectarTotalModerno($);
+    if (moderno !== undefined) return moderno;
+  }
+
   // "1 a 20 de 345": rango de registros. Los espacios son opcionales porque el
   // texto de las celdas del paginador llega concatenado ("1a20de345").
   const RE_RANGO = /(?:^|\D)[\d.]*\d\s*(?:a|-|até|ate)\s*[\d.]*\d\s*de\s*([\d.]*\d)(?!\d)/i;

@@ -39,7 +39,15 @@ export class CaptchaHumano implements ResolutorCaptcha {
  * la respuesta en `<rutaImagen>.txt`. El archivo se consume y se borra.
  */
 export class CaptchaPorArchivo implements ResolutorCaptcha {
-  constructor(private readonly rutaImagen: string, private readonly timeoutMs = 60 * 60 * 1000) {}
+  /**
+   * @param timeoutMs Espera máxima. `0` o negativo significa esperar
+   *   indefinidamente, útil cuando el operador no está delante y el proceso
+   *   puede quedarse a la escucha todo el tiempo que haga falta.
+   */
+  constructor(
+    private readonly rutaImagen: string,
+    private readonly timeoutMs = Number(process.env.CAPTCHA_TIMEOUT_MS ?? 60 * 60 * 1000),
+  ) {}
 
   async resolver(imagen: Buffer, contentType: string): Promise<string> {
     fs.mkdirSync(path.dirname(this.rutaImagen), { recursive: true });
@@ -47,8 +55,9 @@ export class CaptchaPorArchivo implements ResolutorCaptcha {
     if (fs.existsSync(rutaTexto)) fs.unlinkSync(rutaTexto);
     fs.writeFileSync(this.rutaImagen, imagen);
     log.info(`CAPTCHA guardado en ${this.rutaImagen} (${contentType}, ${imagen.length} B). Esperando ${rutaTexto}…`);
+    const sinLimite = !Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0;
     const limite = Date.now() + this.timeoutMs;
-    while (Date.now() < limite) {
+    while (sinLimite || Date.now() < limite) {
       if (fs.existsSync(rutaTexto)) {
         const texto = fs.readFileSync(rutaTexto, 'utf8').trim();
         fs.unlinkSync(rutaTexto);

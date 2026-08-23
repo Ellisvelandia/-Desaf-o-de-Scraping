@@ -7,11 +7,17 @@
 import * as path from 'path';
 
 export const CONFIG = {
-  /** Origen del portal. Las rutas de cada llamada se leen del HTML, no se inventan. */
-  baseUrl: 'https://pje.trf5.jus.br',
+  /**
+   * Origen del portal.
+   *
+   * Configurable porque el PJe es el mismo software desplegado en decenas de
+   * tribunales: apuntar a otra instancia debe ser cambiar una variable, no tocar
+   * el código. Las rutas de cada llamada se siguen leyendo del HTML.
+   */
+  baseUrl: process.env.PJE_BASE_URL ?? 'https://pje.trf5.jus.br',
 
   /** Página de entrada de la Consulta Pública (JSF/Seam). */
-  landingPath: '/pjeconsulta/ConsultaPublica/listView.seam',
+  landingPath: process.env.PJE_LANDING_PATH ?? '/pjeconsulta/ConsultaPublica/listView.seam',
 
   /** Identidad declarada. No se simula ningún navegador en particular más allá del UA. */
   userAgent:

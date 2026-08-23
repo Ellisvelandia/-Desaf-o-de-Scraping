@@ -13,10 +13,11 @@ import { CONFIG } from './config';
 import { CriteriosBusqueda, SesionPje } from './session';
 import { ResolutorCaptcha } from './captcha/humano';
 import { detectarTotalResultados, parsearDocumentos, parsearProcesos, EstructuraInesperadaError } from './parser';
+import { parsearFicha } from './ficha';
 import { construirOpcionesPagina, detectarPaginacion, hayPaginaSiguiente } from './paginacion';
 import { Persistencia } from './persistencia';
 import { ServicioDescarga } from './descarga';
-import { EstadoEjecucion, ProcesoJudicial } from './types';
+import { DocumentoProceso, EstadoEjecucion, ProcesoJudicial } from './types';
 import { log } from './utils/logger';
 import { ServidorSaturadoError, SesionCaducadaError, sleep } from './utils/retry';
 
@@ -151,8 +152,25 @@ export class Scraper {
 
       const control = detectarPaginacion(sesion.documento);
       if (!hayPaginaSiguiente(control, pagina)) {
-        log.info('El paginador no ofrece más páginas: extracción completa');
-        completada = true;
+        // «No hay paginador» y «se acabaron los resultados» no son lo mismo, y
+        // confundirlos es caro. Caso real y observado en los fixtures modernos:
+        // el portal anuncia 106.073 resultados y renderiza el hueco de paginación
+        // VACÍO (`<div title="Paginação"></div>`), así que `detectarPaginacion`
+        // devuelve `undefined` con toda la razón en la primera página. Declarar
+        // ahí «extracción completa» con 30 procesos de 106.073 escribiría un
+        // `extraccionCompletada: true` que es sencillamente falso, y el número
+        // solo aparecería en un log que nadie relee.
+        const faltan = total !== undefined && vistosAhora.size < total;
+        if (faltan) {
+          log.warn(
+            `El paginador no ofrece más páginas, pero solo se han recorrido ${vistosAhora.size} de los ${total} ` +
+              'resultados que anuncia el portal. NO se marca la extracción como completa: puede que la lista se ' +
+              'sirva sin paginador (búsqueda sin filtros) o que el control haya cambiado de forma.',
+          );
+        } else {
+          log.info('El paginador no ofrece más páginas: extracción completa');
+          completada = true;
+        }
         break;
       }
 
@@ -174,6 +192,14 @@ export class Scraper {
    * Abre una sesión nueva (el portal ata los identificadores de descarga al árbol
    * de componentes de la sesión que los emitió) y recorre los procesos pendientes.
    * Un documento que falla se registra y no interrumpe el resto.
+   *
+   * De dónde salen los documentos: de la FICHA de cada proceso, abierta con el
+   * `apertura` que la Fase 1 leyó de su fila, nunca del documento vigente de la
+   * lista. Leerlos de la lista atribuía a todos los procesos los mismos enlaces,
+   * que es peor que no tener ninguno: produce descargas equivocadas con aspecto
+   * de correctas. Cuando el `apertura` es una URL —lo que emite la plantilla
+   * moderna— la fase ni siquiera necesita la lista, y con ella se ahorra el
+   * CAPTCHA y el punto en el que un fallo tumbaba toda la fase.
    */
   async fase2(opciones: OpcionesScraper): Promise<number> {
     log.info('=== FASE 2 · Descarga de PDF ===');
@@ -189,19 +215,46 @@ export class Scraper {
 
     const sesion = new SesionPje(this.captcha);
     await sesion.abrir();
-    if (!(await sesion.buscar(opciones.criterios))) {
-      log.error('No se pudo reabrir la búsqueda para la Fase 2');
-      return 0;
+
+    /**
+     * ¿Hace falta rehacer la búsqueda para poder abrir las fichas?
+     *
+     * Un `apertura` de tipo `url` es un permalink —`…/DetalheProcesso
+     * ConsultaPublica/listView.seam?ca=<hash>`— que el portal sirve con un GET y
+     * las cookies de la sesión, sin CAPTCHA y sin depender de la lista: está
+     * verificado en vivo (ver `docs/protocol.md`). Un `postback`, en cambio, solo
+     * se decodifica sobre el árbol de componentes de la lista que lo emitió, así
+     * que ahí la búsqueda es obligatoria —y en la variante seam cuesta un CAPTCHA.
+     *
+     * Distinguirlos es justo lo que hace la Fase 2 robusta: en la plantilla
+     * moderna ya no hay ninguna razón para reabrir la lista, y con ella
+     * desaparece el punto en el que un CAPTCHA fallido tumbaba toda la fase.
+     */
+    const necesitaLista = pendientes.some((p) => p.apertura?.tipo === 'postback');
+    /**
+     * Copia de la lista para volver a ella entre proceso y proceso. `undefined`
+     * cuando no se rehizo la búsqueda: restaurar la página de entrada entre
+     * fichas no aportaría nada y ocultaría que no hay lista que restaurar.
+     */
+    let listado: string | undefined;
+    if (necesitaLista) {
+      if (!(await sesion.buscar(opciones.criterios))) {
+        log.error('No se pudo reabrir la búsqueda para la Fase 2');
+        return 0;
+      }
+      listado = sesion.instantanea();
+    } else {
+      log.info('Todas las fichas pendientes se abren por URL: no se rehace la búsqueda ni su CAPTCHA');
     }
 
     const descargas = new ServicioDescarga(sesion);
     let bajados = 0;
     const tope = opciones.maxDescargas ?? Infinity;
 
-    // La lista de resultados vive en el documento vigente y abrir una ficha lo
-    // sustituye. Se guarda una copia para volver a ella entre proceso y proceso:
-    // rehacer la búsqueda costaría otro CAPTCHA por cada expediente.
-    const listado = sesion.instantanea();
+    /** Vuelve a la lista si es que había una que guardar. */
+    const volverALaLista = (): void => {
+      if (listado !== undefined) sesion.restaurar(listado);
+    };
 
     for (const proceso of pendientes) {
       if (bajados >= tope) {
@@ -241,25 +294,62 @@ export class Scraper {
           // El portal rechazó el estado de vista restaurado. Todo intento
           // posterior tendría el mismo destino, así que se corta aquí en vez de
           // recorrer los procesos que quedan marcándolos fallidos uno a uno.
-          log.error('La sesión ya no acepta volver a la lista; se detiene la Fase 2. Relánzala para continuar.');
+          log.error('La sesión ya no es válida para el portal; se detiene la Fase 2. Relánzala para continuar.');
           break;
         }
-        sesion.restaurar(listado);
+        volverALaLista();
         continue;
+      }
+
+      // La ficha es la fuente de los documentos, y de paso de las partes y de los
+      // rótulos de cabecera: la lista solo publica los polos en una línea suelta.
+      // `parsearFicha` conoce la plantilla moderna (VERIFICADA contra
+      // `pje-nuevo-ficha.html`); `parsearDocumentos` es el camino genérico que
+      // queda para la plantilla antigua, cuya ficha sigue sin capturar.
+      const ficha = parsearFicha(sesion.documento);
+      let documentos: DocumentoProceso[];
+      if (ficha.esFicha) {
+        documentos = ficha.documentos;
+        // Las de la ficha son mejores que las de la lista: traen el papel real,
+        // el documento de identificación y la representación letrada.
+        if (ficha.partes.length > 0) proceso.partes = ficha.partes;
+        // Se funden en vez de sustituir: `camposExtra` ya trae lo que aportó la
+        // fila (sigla, asunto, última movimentación) y son claves distintas de
+        // los rótulos del bloque «Dados do Processo».
+        if (ficha.camposExtra) proceso.camposExtra = { ...(proceso.camposExtra ?? {}), ...ficha.camposExtra };
+      } else {
+        log.warn(
+          `${proceso.numeroProcesso}: la página abierta no trae ninguna de las tablas de una ficha; ` +
+            'se lee con el parser genérico',
+        );
+        documentos = parsearDocumentos(sesion.documento);
       }
 
       // Se persisten al leerlos, aunque la descarga falle después: son parte de
       // «toda la información de cada documento» que pide el enunciado, y valen por
       // sí mismos en `records.json`.
-      const documentos = parsearDocumentos(sesion.documento);
       proceso.documentos = documentos;
       this.persistencia.guardarProcesos(procesos);
 
       const conArchivo = documentos.filter((d) => d.descarga !== undefined);
       if (conArchivo.length === 0) {
-        proceso.estado = 'sin_documentos';
+        if (ficha.esFicha) {
+          // Ficha legítima que no publica nada descargable. Es terminal: marcarlo
+          // `sin_documentos` lo saca de futuras pasadas, y eso solo es correcto
+          // porque consta que la navegación llegó a su destino.
+          proceso.estado = 'sin_documentos';
+        } else {
+          // Aquí NO consta. Un `sin_documentos` retiraría para siempre un proceso
+          // cuya ficha quizá nunca llegó a abrirse (sesión caducada, redirección
+          // a la lista), y el fallo se volvería invisible. Se registra y se deja
+          // pendiente para la siguiente pasada.
+          const motivo = 'La página abierta no es una ficha reconocible y no publica ningún documento';
+          log.warn(`${proceso.numeroProcesso}: ${motivo}`);
+          this.persistencia.registrarFallo({ numeroProcesso: proceso.numeroProcesso, fase: 'ficha', motivo });
+          proceso.estado = 'fallido';
+        }
         this.persistencia.guardarProcesos(procesos);
-        sesion.restaurar(listado);
+        volverALaLista();
         continue;
       }
 
@@ -290,7 +380,7 @@ export class Scraper {
       this.persistencia.guardarProcesos(procesos);
 
       // De vuelta a la lista para poder abrir la ficha del proceso siguiente.
-      sesion.restaurar(listado);
+      volverALaLista();
     }
 
     log.info(`Fase 2 terminada: ${bajados} archivos descargados en ${CONFIG.pdfDir}`);
@@ -302,10 +392,16 @@ export class Scraper {
   /**
    * Abre la ficha de un proceso y la deja como documento vigente de la sesión.
    *
-   * Los dos caminos que publica el portal son un postback JSF (el enlace es
-   * JavaScript y hay que reproducir el POST) o una URL de verdad. Cuál de los dos
-   * usa el TRF5 no está verificado —ver `docs/protocol.md`—, así que se soportan
-   * ambos y se decide por lo que la fila publicó, no por una suposición.
+   * Los dos caminos que publica el portal son una URL de verdad o un postback JSF
+   * (el enlace es JavaScript y hay que reproducir el POST). Se decide por lo que
+   * la fila publicó, no por una suposición:
+   *
+   *  - `url`: es lo que emite la plantilla MODERNA, y está VERIFICADO (ver
+   *    `docs/protocol.md`): `openPopUp('…','/<ctx>/ConsultaPublica/
+   *    DetalheProcessoConsultaPublica/listView.seam?ca=<hash>')`, un GET normal
+   *    con las cookies de la sesión y sin CAPTCHA.
+   *  - `postback`: el camino de la plantilla ANTIGUA, todavía sin capturar,
+   *    porque su CAPTCHA de imagen bloquea la lista de resultados.
    */
   private async abrirFicha(sesion: SesionPje, proceso: ProcesoJudicial): Promise<void> {
     const apertura = proceso.apertura;

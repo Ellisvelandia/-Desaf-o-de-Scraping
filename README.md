@@ -108,6 +108,19 @@ Es el modo para cuando no hay una terminal interactiva conectada: ejecución sup
 
 El portal no navega por URL: es una aplicación JSF con estado en servidor donde cada interacción es un POST del formulario completo por XMLHttpRequest. El scraper reproduce exactamente esa conversación.
 
+**Antes de nada, el scraper detecta automáticamente con cuál de las dos Consultas Públicas del PJe está hablando.** No hay una sola: conviven dos plantillas incompatibles, y enviar el POST de una a la otra devuelve la página de inicio sin error visible, de modo que el fallo aparecería mucho después, al no haber tabla. `src/variante.ts` clasifica la página nada más abrirla, y todo lo que viene detrás se adapta a lo que diga:
+
+| | **Antigua — «seam»** | **Moderna — «fPP»** |
+|---|---|---|
+| Ejemplo | `pje.trf5.jus.br/pjeconsulta/` — **el objetivo del desafío** | resto de instancias (TRF5 *treinamento*, TRF1, TRF6…) |
+| Formulario / botón | `consultaPublicaForm` / `…:pesq` | `fPP` / `fPP:searchProcessos` |
+| CAPTCHA | imagen de Seam, **validada en servidor** | ninguno: el widget no llega a instanciarse y el POST devuelve la tabla sin enviar token |
+| Tabla de resultados | `rich:dataTable` genérico → `src/parser.ts` | `…:processosTable` con celda «Processo» compuesta → `src/parserModerno.ts` |
+| Ficha del proceso | postback A4J (supuesto) | **GET** a `…DetalheProcessoConsultaPublica/listView.seam?ca=<hash>` → `src/ficha.ts` |
+| Verificada contra HTML real | **no** | **sí**, en tres instancias distintas |
+
+Tres consecuencias prácticas, y ninguna se configura —se deciden por lo que trae el HTML—: en la variante moderna **no se le pide ningún CAPTCHA a la persona** (pedirlo sería trabajo humano tirado a la basura), `parsearProcesos` **delega** en el parser que sabe descomponer la celda compuesta, y la Fase 2 abre cada ficha por su URL **sin rehacer la búsqueda**, con lo que desaparece el punto en el que un CAPTCHA fallido tumbaba la fase entera. El diagrama que sigue describe el camino de la variante antigua, que es la del objetivo del desafío.
+
 ```
   ┌──────────────────────────────────────────────────────────────────────┐
   │ 1. GET /pjeconsulta/ConsultaPublica/listView.seam                    │
@@ -146,8 +159,11 @@ El portal no navega por URL: es una aplicación JSF con estado en servidor donde
                                     ▼
   ┌──────────────────────────────────────────────────────────────────────┐
   │ 5. Ficha del proceso (Fase 2): se activa el control que la fila      │
-  │    publicó (postback A4J o GET), parsearDocumentos() lee sus         │
-  │    documentos, y al terminar se restaura la lista para el siguiente  │
+  │    publicó. Si es una URL (variante moderna) → GET directo y         │
+  │    parsearFicha() lee partes, documentos y «Dados do Processo»;      │
+  │    si es un postback A4J → se reproduce el POST y se lee con         │
+  │    parsearDocumentos(). Con URL no hace falta volver a la lista;     │
+  │    con postback sí, y se restaura la copia guardada                  │
   └──────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -182,8 +198,12 @@ src/
 ├── explorar.ts           Diagnóstico del portal: vuelca tablas, enlaces y scrollers detectados
 ├── scraper.ts            Orquestador: Scraper.fase1 (metadatos) y Scraper.fase2 (PDF)
 ├── session.ts            SesionPje: abrir, buscar, accionA4J, sonda de salud del servidor
-├── parser.ts             parsearProcesos, parsearDocumentos, detectarTotalResultados,
-│                         EstructuraInesperadaError
+├── variante.ts           detectarVariante: cuál de las dos Consultas Públicas sirve el portal
+├── parser.ts             parsearProcesos (delega en el moderno si ve su tabla),
+│                         parsearDocumentos, detectarTotalResultados
+├── parserModerno.ts      parsearProcesosModerno, detectarTotalModerno: tabla de la variante fPP
+├── ficha.ts              parsearFicha: partes, documentos y «Dados do Processo» del expediente
+├── errores.ts            EstructuraInesperadaError, compartido por los dos parsers
 ├── paginacion.ts         detectarPaginacion, construirOpcionesPagina, hayPaginaSiguiente
 ├── persistencia.ts       Persistencia: JSON atómico, dedupe por número CNJ, estado, fallos, CSV
 ├── descarga.ts           ServicioDescarga, DescargaInvalidaError, nombres de fichero seguros
@@ -198,9 +218,11 @@ src/
 │   ├── logger.ts         log.info / warn / error / debug con marca de tiempo relativa
 │   └── retry.ts          withRetry, sleep, esReintentable, calcularEspera,
 │                         ServidorSaturadoError, SesionCaducadaError, BloqueadoPorWafError
-└── __tests__/            Suite de Jest (5 ficheros, 121 pruebas, sin red)
-    └── fixtures/         portal-inicio.html (captura real, JSESSIONID redactado) y
-                          fixtures sintéticos de resultados, paginador y respuestas A4J
+└── __tests__/            Suite de Jest (6 ficheros, 149 pruebas, sin red)
+    └── fixtures/         Capturas REALES: portal-inicio.html (variante antigua, JSESSIONID
+                          redactado), pje-nuevo-resultados.html y -trf1.html (listas de dos
+                          instancias) y pje-nuevo-ficha.html. Más fixtures sintéticos de
+                          resultados, paginador y respuestas A4J
 
 tsconfig.json            Configuración de compilación (excluye las pruebas de dist/)
 tsconfig.test.json       La misma en modo noEmit, incluyendo las pruebas, para `npm run lint`
@@ -292,12 +314,13 @@ npm test        # jest + ts-jest
 npm run lint    # tsc --noEmit, comprobación de tipos en modo estricto
 ```
 
-El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. Cinco suites, **121 pruebas**, todas sin red:
+El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node`, y los tests se buscan en `src/__tests__/**/*.test.ts`. Seis suites, **149 pruebas**, todas sin red:
 
 | Suite | Qué fija |
 |---|---|
 | `jsf.test.ts` | El contrato que el servidor exige y no se puede negociar: formulario íntegro, `ViewState` vigente y los cuatro marcadores de A4J. Se comprueba contra la captura real del portal. |
 | `parser.test.ts` | Mapeo por cabecera, fecha brasileña a ISO, columnas desconocidas a `camposExtra`, extracción del enlace a la ficha, y —la más valiosa— que una estructura cambiada rompa **ruidosamente**. |
+| `moderno.test.ts` | La variante moderna contra **HTML real**: detección de plantilla, las 30 filas del TRF5 y las 22 con número de las 30 del TRF1 (misma vista, **otra instancia** — es la prueba de que no hay ids codificados), los totales del pie de tabla, la delegación de `parsearProcesos`, y de la ficha: partes de los dos polos, cabeceras descontaminadas del JavaScript de RichFaces y preferencia del PDF real sobre el visor HTML. |
 | `persistencia.test.ts` | Deduplicación por número CNJ, escritura atómica sin `.tmp` huérfanos, degradación ante ficheros corruptos y formato del CSV. |
 | `descarga.test.ts` | Que el nombre de fichero sobreviva a lo que el portal escriba en un título, y que la ruta final solo aparezca si lo descargado es un PDF de verdad. |
 | `retry.test.ts` | El requisito 3 del enunciado: detección del `429`, retroceso exponencial con jitter y tope, `Retry-After`, y qué se propaga cuando ya no se puede seguir. |
@@ -305,7 +328,7 @@ El arnés está configurado en `jest.config.js`: preset `ts-jest`, entorno `node
 Dos decisiones del arnés que conviene conocer:
 
 - **Los fixtures están versionados en `src/__tests__/fixtures/`, no en `output/`.** `output/` está en `.gitignore`, así que una prueba anclada ahí pasaría en la máquina donde se capturó y fallaría en cualquier clon limpio. `portal-inicio.html` es la captura real del portal con el `JSESSIONID` sustituido por `SESION-REDACTADA`: un identificador de sesión no entra en el control de versiones, aunque esté caducado, y la forma `;jsessionid=<valor>.<nodo>` —que es lo único que las pruebas comprueban— se conserva intacta.
-- **Los fixtures `resultados-*.html` son sintéticos y lo dicen en su cabecera.** Reproducen los marcadores estructurales que RichFaces 3.3 genera siempre, no una fila real del TRF5, que sigue sin estar verificada (ver **Limitaciones conocidas**). Lo que demuestran no es que el parser acierte con el portal, sino que se adapta a lo que reconoce y falla ruidosamente con lo que no.
+- **Hay dos clases de fixture y valen cosas distintas.** Los `resultados-*.html` son **sintéticos** y lo dicen en su cabecera: reproducen los marcadores estructurales que RichFaces 3.3 genera siempre, no una fila real de la variante antigua del TRF5, que sigue sin verificarse (ver **Limitaciones conocidas**). Lo que demuestran no es que el parser acierte con ese portal, sino que se adapta a lo que reconoce y falla ruidosamente con lo que no. Los `pje-nuevo-*.html` y `portal-inicio.html`, en cambio, son **capturas reales**, y las pruebas de `moderno.test.ts` que corren sobre ellas sí demuestran acierto contra HTML servido por el PJe.
 
 ---
 
@@ -313,11 +336,18 @@ Dos decisiones del arnés que conviene conocer:
 
 **El CAPTCHA exige una persona, una vez por fase.** No es automatizable sin evadir una detección de bots del titular del sitio, y no se va a hacer. Una ejecución desatendida de principio a fin no es posible; lo más cerca que se puede estar es `CAPTCHA_MODE=file`, que solo cambia por dónde llega la respuesta humana.
 
-**La forma exacta de la fila de resultados no está verificada.** `docs/protocol.md` la deja marcada como PENDIENTE: en las capturas de reconocimiento el servidor del TRF5 falló con `errorUnexpected` antes de devolver una lista con resultados, así que nunca se ha visto una fila real. El parser está escrito sobre los marcadores estructurales que RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`), indexa por cabecera con sinónimos tolerantes en vez de por posición, ancla cada fila al formato del número CNJ y manda a `camposExtra` todo lo que no reconoce. Y cuando encuentra una tabla que estructuralmente es la de resultados pero cuyo contenido ya no reconoce, **lanza `EstructuraInesperadaError` en lugar de devolver filas a medias**. Es decir: si la suposición es incorrecta, la ejecución se detiene con un mensaje que incluye la primera fila, no produce datos silenciosamente equivocados. Lo mismo vale para los pasos 5 y 6 del diagrama: si el portal exige un segundo CAPTCHA al abrir un proceso, aún no está confirmado.
+**La fila de resultados está verificada en la variante moderna; en la del objetivo, no.** Aquí hay que separar dos cosas que antes se contaban como una sola:
 
-**La navegación a la ficha de un proceso no está verificada.** La Fase 2 necesita abrir el expediente para leer sus documentos, y el control que lo abre vive en la fila de resultados, que es justo lo que no se ha podido capturar. `parser.ts` lo lee con un criterio deliberadamente estrecho: acepta el control rotulado con el propio número del proceso —la única señal autoverificable— o, si la fila trae uno solo, ese. Con varios controles y ninguno rotulado con el número **no adivina**: omite el campo `apertura`, y la Fase 2 anota el proceso en `failed.json` con fase `ficha` y sigue. Un `apertura` equivocado descargaría el documento de otra cosa con aspecto de estar funcionando, que es peor que no descargar nada.
+- **Variante moderna («fPP»): VERIFICADA contra tres capturas reales de tres instancias distintas** — `pje-nuevo-resultados.html` (TRF5 *treinamento*, contexto `/pjeconsulta`), `pje-nuevo-resultados-trf1.html` (TRF1, contexto `/consultapublica`) y `pje-nuevo-ficha.html` (una ficha completa). Están versionadas en `src/__tests__/fixtures/` y `src/__tests__/moderno.test.ts` corre contra ellas sin red. De ahí sale la estructura real: tres columnas, celda «Processo» compuesta (clase judicial + sigla + número CNJ + asunto + los dos polos), total en `<span class="text-muted">N resultados encontrados</span>` y ficha abierta por GET con `?ca=<hash>`. La captura del TRF1 no es una repetición: es la que demuestra que **no hay ids codificados a mano**, porque los sufijos `j_idNNN` de la misma vista cambian de un tribunal a otro (`j_id257` frente a `j_id259`).
+- **Variante antigua («seam»), que es la del objetivo — `pje.trf5.jus.br/pjeconsulta/`, 1.er grado: SIGUE SIN VERIFICAR, y el motivo es su CAPTCHA de imagen.** Ese CAPTCHA está validado en servidor y bloquea la lista de resultados, así que nunca se ha visto una fila real de esa instancia. Lo que hay para ella es hipótesis razonada: marcadores estructurales que RichFaces 3.3 genera siempre (`rich-table`, `rich-table-row`, `tbody` con sufijo `:tb`), indexación por cabecera con sinónimos tolerantes en vez de por posición, cada fila anclada al formato del número CNJ y todo lo no reconocido a `camposExtra`. Cuando encuentra una tabla que estructuralmente es la de resultados pero cuyo contenido ya no reconoce, **lanza `EstructuraInesperadaError` en lugar de devolver filas a medias**: si la suposición es incorrecta, la ejecución se detiene con un mensaje que incluye la primera fila, no produce datos silenciosamente equivocados.
 
-Entre ficha y ficha la sesión vuelve a la lista restaurando una copia del documento, en lugar de repetir la búsqueda (que costaría otro CAPTCHA por expediente). Eso reenvía un `ViewState` anterior; JSF 1.2 con estado en servidor conserva varias vistas por sesión, así que suele aceptarse, pero **tampoco está verificado en este portal**. Si el TRF5 lo rechaza, el POST responde con una redirección, el scraper lo reconoce como `SesionCaducadaError`, detiene la Fase 2 con un mensaje explícito y no marca nada como completado.
+**Dato medido que no es un fallo:** en el fixture del TRF1, de sus 30 filas solo **22 publican número CNJ**; en las otras 8 el rótulo dice solo «PJEC - *Assunto*» y la columna de movimentación llega vacía. Como `numeroProcesso` es la clave de deduplicación de todo el scraper, esas filas se omiten con una traza de depuración en lugar de emitir un registro con una clave inventada. En el fixture del TRF5 las 30 filas traen número y salen 30 procesos.
+
+**La navegación a la ficha está verificada en la variante moderna.** La fila publica la ficha como una URL (`openPopUp('…','/<ctx>/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=<hash>')`) y el portal la sirve con un GET normal y las cookies de la sesión, sin CAPTCHA. La Fase 2 la usa tal cual y **ni siquiera necesita rehacer la búsqueda**. En la variante antigua ese control sigue sin capturarse: `parser.ts` lo lee con un criterio deliberadamente estrecho —el control rotulado con el propio número del proceso, la única señal autoverificable, o el único de la fila—, y con varios controles y ninguno rotulado con el número **no adivina**: omite `apertura`, y la Fase 2 anota el proceso en `failed.json` con fase `ficha` y sigue. Un `apertura` equivocado descargaría el documento de otra cosa con aspecto de estar funcionando, que es peor que no descargar nada.
+
+**Volver a la lista entre fichas solo hace falta con `apertura` de tipo postback, y eso no está verificado.** Cuando toca, la sesión restaura una copia del documento en lugar de repetir la búsqueda (que costaría otro CAPTCHA por expediente), lo que reenvía un `ViewState` anterior; JSF 1.2 con estado en servidor conserva varias vistas por sesión, así que suele aceptarse, pero no está comprobado en este portal. Si el TRF5 lo rechaza, el POST responde con una redirección, el scraper lo reconoce como `SesionCaducadaError`, detiene la Fase 2 con un mensaje explícito y no marca nada como completado.
+
+**No todo documento de la ficha se puede bajar como PDF.** El único camino verificado sirviendo un binario es `reportReciboPDF.seam` (200 `application/pdf`, bytes `%PDF-1`), y es el que `ficha.ts` prefiere. Los documentos cuyo único enlace es el visor `documentoSemLoginHTML.seam` se emiten igualmente —con su título, su fecha y su `idProcessoDoc`, que son información legítima del expediente—, pero ese servlet devuelve `text/html`, así que `ServicioDescarga` los rechaza por firma y quedan anotados en `failed.json`. Es deliberado: un fallo explícito vale más que una página HTML guardada en disco con extensión `.pdf`.
 
 **El portal es lento e inestable.** Latencia observada de 1,8 a 2,1 s por GET con el servidor sano, y hasta 31 s cuando su pool de conexiones está saturado. El `errorUnexpected` por `IJ000655` aparece con frecuencia y no depende del scraper. Una ejecución puede pasar minutos esperando en la sonda de salud antes de poder siquiera pedir el CAPTCHA.
 
@@ -331,7 +361,7 @@ Entre ficha y ficha la sesión vuelve a la lista restaurando una copia del docum
 
 | Requisito del desafío | Dónde está resuelto |
 |---|---|
-| 1. Navegar todo el sitio y extraer la información de cada documento | `src/scraper.ts` (`fase1`) recorre el paginador; `src/paginacion.ts` lee el `rich:datascroller` del HTML vigente y construye cada salto; `src/parser.ts` (`parsearProcesos`) extrae número CNJ, órgano, clase, fecha, partes y todo lo demás a `camposExtra`, y lee de la fila el control que abre la ficha (`apertura`); `fase2` abre la ficha de cada proceso y `parsearDocumentos` extrae sus documentos con su enlace de descarga. La navegación a la ficha **no está verificada** contra el portal: ver **Limitaciones conocidas** |
+| 1. Navegar todo el sitio y extraer la información de cada documento | `src/scraper.ts` (`fase1`) recorre el paginador; `src/paginacion.ts` lee el `rich:datascroller` del HTML vigente y construye cada salto; `src/parser.ts` (`parsearProcesos`) extrae número CNJ, órgano, clase, fecha, partes y todo lo demás a `camposExtra`, y lee de la fila el control que abre la ficha (`apertura`), delegando en `src/parserModerno.ts` cuando el documento trae la tabla de la variante moderna; `fase2` abre la ficha de cada proceso y `src/ficha.ts` (`parsearFicha`) extrae sus partes, sus documentos con enlace de descarga y los rótulos de «Dados do Processo». Verificado en la variante moderna; **no verificado** en la antigua, que es la del objetivo: ver **Limitaciones conocidas** |
 | 2. Descargar PDF con nombre descriptivo, en carpeta organizada | `src/descarga.ts`: `ServicioDescarga.rutaDestino` compone `<numeroCNJ>_<idDocumento>_<titulo>.pdf` bajo `output/pdfs/`; `nombreSeguro` sanea el texto del portal para el sistema de ficheros |
 | 2b. Basta demostrar que puede, sin bajarlos todos | `MAX_DESCARGAS` (por defecto 25) acota la Fase 2 en `src/index.ts` y `src/scraper.ts` |
 | 3. Detectar `429` y reintentar con retroceso exponencial | `src/utils/retry.ts`: `esReintentable` incluye `429` en `RETRYABLE`, `calcularEspera` aplica `base·2^(n-1)` con jitter y tope, y respeta `Retry-After` |

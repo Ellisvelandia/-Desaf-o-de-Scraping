@@ -1,0 +1,161 @@
+{
+  "0005967-28.2004.4.05.8401": {
+    "numeroProcesso": "0005967-28.2004.4.05.8401",
+    "classeJudicial": "APELAÇÃO CÍVEL",
+    "partes": [
+      {
+        "papel": "ATIVO",
+        "nombre": "FRANCISCO DAS CHAGAS DE FREITAS - CPF: 399.624.074-00 (APELANTE)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "FAZENDA NACIONAL - CNPJ: 00.394.460/0001-41 (APELADO)"
+      }
+    ],
+    "apertura": {
+      "tipo": "url",
+      "url": "/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=e9293f03e86dadb724215f4ae917778f42a40199a3b11593"
+    },
+    "camposExtra": {
+      "sigla": "ApCiv",
+      "assunto": "Atos Administrativos",
+      "ultimaMovimentacao": "Expedição de Certidão.",
+      "fechaUltimaMovimentacao": "2026-08-22T15:06:24",
+      "Número Processo": "0005967-28.2004.4.05.8401",
+      "Data da Distribuição": "17/10/2006",
+      "Classe Judicial": "APELAÇÃO CÍVEL (198)",
+      "Assunto": "DIREITO TRIBUTÁRIO (14) - Contribuições (6031) - Contribuições Previdenciárias (6048) - Mandato Eletivo/Lei 9.506/97 (6051 DIREITO ADMINISTRATIVO E OUTRAS MATÉRIAS DE DIREITO PÚBLICO (9985) - Atos Administrativos (9997",
+      "Jurisdição": "TRF5",
+      "Órgão Julgador Colegiado": "Pleno",
+      "Endereço": "Tribunal Regional Federal - 5ª Região, Cais do Apolo, s/n, Recife, RECIFE - PE - CEP: 50030-908",
+      "Órgão Julgador": "Gab VICE-PRESIDÊNCIA",
+      "Processo referência": "0005967-28.2004.4.05.8401"
+    },
+    "paginaOrigen": 1,
+    "vistoEn": "2026-08-23T12:41:36.614Z",
+    "estado": "sin_documentos",
+    "documentos": []
+  },
+  "0000793-33.2007.4.05.8401": {
+    "numeroProcesso": "0000793-33.2007.4.05.8401",
+    "classeJudicial": "APELAÇÃO CÍVEL",
+    "partes": [
+      {
+        "papel": "ATIVO",
+        "nombre": "CAIXA ECONOMICA FEDERAL - CEF - CNPJ: 00.360.305/0001-04 (APELANTE)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "FRANCISCO DAS CHAGAS CUNHA DA SILVA - CPF: 154.767.584-53 (APELADO)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "MARCOS ANTONIO INACIO DA SILVA - OAB PE573-A - CPF: 206.448.414-00 (ADVOGADO)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "NARRIMAN XAVIER DA COSTA E INACIO - OAB PB10334 - CPF: 419.121.364-49 (ADVOGADO)"
+      }
+    ],
+    "apertura": {
+      "tipo": "url",
+      "url": "/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=626a8210dc13cfddfcf225843abcd34af3d19a12e7c30f6e"
+    },
+    "camposExtra": {
+      "sigla": "ApCiv",
+      "assunto": "Expurgos Inflacionários / Planos Econômicos",
+      "ultimaMovimentacao": "Conclusos para julgamento",
+      "fechaUltimaMovimentacao": "2026-06-27T13:22:53",
+      "Número Processo": "0000793-33.2007.4.05.8401",
+      "Data da Distribuição": "27/06/2026",
+      "Classe Judicial": "APELAÇÃO CÍVEL (198)",
+      "Assunto": "DIREITO DO CONSUMIDOR (1156) - Contratos de Consumo (7771) - Bancários (7752) - Expurgos Inflacionários / Planos Econômicos (10945 DIREITO ADMINISTRATIVO E OUTRAS MATÉRIAS DE DIREITO PÚBLICO (9985) - Intervenção no Domínio Econômico (10136) - Expurgos Inflacionários / Planos Econômicos (10154",
+      "Jurisdição": "TRF5",
+      "Órgão Julgador Colegiado": "1ª Turma",
+      "Endereço": "Tribunal Regional Federal - 5ª Região, Cais do Apolo, s/n, Recife, RECIFE - PE - CEP: 50030-908",
+      "Órgão Julgador": "Gab 1 - Des. ROBERTO WANDERLEY"
+    },
+    "paginaOrigen": 1,
+    "vistoEn": "2026-08-23T12:41:36.614Z",
+    "estado": "completado",
+    "documentos": [
+      {
+        "titulo": "Despacho (Despacho)",
+        "descarga": {
+          "tipo": "url",
+          "url": "/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?idBin=10796101&numeroDocumento=a3598fa9e669f9d59663f78b0863617e7fd7b513&nomeArqProcDocBin=Despacho&idProcessoDocumento=10954451&actionMethod=ConsultaPublica%2FDetalheProcessoConsultaPublica%2FlistView.xhtml%3AprocessoDocumentoBinHome.setDownloadInstance%28row%29"
+        },
+        "id": "10954451",
+        "fecha": "2026-05-28T20:43:31"
+      },
+      {
+        "titulo": "Visualizar comprovante de protocolo",
+        "descarga": {
+          "tipo": "url",
+          "url": "/pjeconsulta/Processo/reportReciboPDF.seam?idBin=10796101&idProcessoDoc=10954451&idProcessoTrf=116629"
+        },
+        "id": "10954451",
+        "fecha": "2026-05-28T20:43:31"
+      }
+    ]
+  },
+  "0008176-58.2008.4.05.8100": {
+    "numeroProcesso": "0008176-58.2008.4.05.8100",
+    "classeJudicial": "APELAÇÃO CÍVEL",
+    "partes": [
+      {
+        "papel": "ATIVO",
+        "nombre": "CAIXA ECONOMICA FEDERAL - CEF - CNPJ: 00.360.305/0001-04 (APELANTE)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "FRANCISCO DAS CHAGAS SILVA - CPF: 146.000.993-20 (APELADO)"
+      },
+      {
+        "papel": "PASSIVO",
+        "nombre": "DIOGO ASSAD BOECHAT - OAB ES11373 - CPF: 768.053.951-00 (ADVOGADO)"
+      }
+    ],
+    "apertura": {
+      "tipo": "url",
+      "url": "/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?ca=31a38e21f4db9779fcf225843abcd34af3d19a12e7c30f6e"
+    },
+    "camposExtra": {
+      "sigla": "ApCiv",
+      "assunto": "Expurgos Inflacionários / Planos Econômicos",
+      "ultimaMovimentacao": "Juntada de Certidão",
+      "fechaUltimaMovimentacao": "2026-06-07T00:00:22",
+      "Número Processo": "0008176-58.2008.4.05.8100",
+      "Data da Distribuição": "06/02/2013",
+      "Classe Judicial": "APELAÇÃO CÍVEL (198)",
+      "Assunto": "DIREITO ADMINISTRATIVO E OUTRAS MATÉRIAS DE DIREITO PÚBLICO (9985) - Intervenção no Domínio Econômico (10136) - Expurgos Inflacionários / Planos Econômicos (10154",
+      "Jurisdição": "TRF5",
+      "Órgão Julgador Colegiado": "Pleno",
+      "Endereço": "Tribunal Regional Federal - 5ª Região, Cais do Apolo, s/n, Recife, RECIFE - PE - CEP: 50030-908",
+      "Órgão Julgador": "Gab VICE-PRESIDÊNCIA"
+    },
+    "paginaOrigen": 1,
+    "vistoEn": "2026-08-23T12:41:36.614Z",
+    "estado": "completado",
+    "documentos": [
+      {
+        "titulo": "Despacho (Despacho)",
+        "descarga": {
+          "tipo": "url",
+          "url": "/pjeconsulta/ConsultaPublica/DetalheProcessoConsultaPublica/listView.seam?idBin=10564086&numeroDocumento=588d33218ec526b6b5a17da509fb324560ff4876&nomeArqProcDocBin=Despacho&idProcessoDocumento=10717136&actionMethod=ConsultaPublica%2FDetalheProcessoConsultaPublica%2FlistView.xhtml%3AprocessoDocumentoBinHome.setDownloadInstance%28row%29"
+        },
+        "id": "10717136",
+        "fecha": "2026-05-27T20:42:39"
+      },
+      {
+        "titulo": "Visualizar comprovante de protocolo",
+        "descarga": {
+          "tipo": "url",
+          "url": "/pjeconsulta/Processo/reportReciboPDF.seam?idBin=10564086&idProcessoDoc=10717136&idProcessoTrf=111278"
+        },
+        "id": "10717136",
+        "fecha": "2026-05-27T20:42:39"
+      }
+    ]
+  }
+}
